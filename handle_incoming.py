@@ -161,7 +161,7 @@ def get_correct_user_group():
 
     userid = os.getuid()
     try:
-        groupid = grp.getgrnam(group)
+        groupid = grp.getgrnam(group).gr_gid
     except KeyError:
         raise ValueError("group %s does not exist" % group)
     return userid, groupid
@@ -191,28 +191,27 @@ def check_output_permissions(path):
     issues of this tool.
     """
     userid, groupid = get_correct_user_group()
-    error = "invalid file permissions"
 
     if not os.stat(path).st_uid == userid:
-        logger.critical(error)
+        logger.critical("%s is owned by incorrect group", path)
         raise ValueError("Invalid file owner: " + path)
     if not os.stat(path).st_gid == groupid:
-        logger.critical(error)
+        logger.critical("%s is owned by incorrect user", path)
         raise ValueError("Invalid group: " + path)
     if os.path.isdir(path):
         if os.stat(path).st_mode % 0o1000 != 0o770:
-            logger.critical(error)
+            logger.critical("%s has invalid permissions", path)
             raise ValueError("Invalid permissions for directory: " + path)
     else:
         if os.stat(path).st_mode % 0o1000 != 0o660:
-            logger.critical(error)
+            logger.critical("%s has invalid permissions", path)
             raise ValueError("Invalid file permissions: " + path)
 
 
 def copy(file, dest, checksums_file=None):
     """ TODO add call to checksums """
     logger.debug("copying file %s to %s", file, dest)
-    file = os.path.abs(file)
+    file = os.path.abspath(file)
     if os.path.isfile(file):
         copy = shutil.copyfile
     elif os.path.isdir(file):
