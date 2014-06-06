@@ -35,12 +35,12 @@ def init_logging(logfile, loglevel, name):
 
     if logfile is not None:
         logging.basicConfig(
-            level=loglevel,
+            level=getattr(logging, loglevel),
             filename=logfile,
         )
     else:
         logging.basicConfig(
-            level=loglevel,
+            level=getattr(logging, loglevel),
             stream=sys.stdout,
         )
 
@@ -302,6 +302,7 @@ def listen(path, interval):
             try:
                 logger.info("New file arrived: " + file)
                 check_input_permissions(file)
+                """
                 try:
                     checksums(
                         [file],
@@ -312,6 +313,7 @@ def listen(path, interval):
                     with open('CHECKSUMS_DO_NOT_MATCH', 'w'):
                         pass
                     raise ValueError("Invalid checksums")
+                """
 
                 handle_file(path, file)
                 logger.info("Finished processing file. Cleaning up")
