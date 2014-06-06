@@ -65,7 +65,7 @@ def checksums(files, checksums_file, write_checksums=False, force_check=False):
 
     # read old checksums from checksums_file
     try:
-        with checksums_file.open() as f:
+        with open(checksums_file) as f:
             known_sums = read_checksums(f.read(), basedir)
     except OSError:
         known_sums = {}
@@ -398,7 +398,7 @@ def main():
     path = os.path.abspath(args.dropboxdir)
     if not os.path.exists(path):
         print("Could not find dropboxdir", file=sys.stderr)
-    init_logging(args.logfile, args.loglevel, path.stem)
+    init_logging(args.logfile, args.loglevel, os.path.basename(path))
 
     # overwrite permission checking by stubs
     if not args.check_permissions:
