@@ -81,8 +81,8 @@ def checksums(files, checksums_file, write_checksums=False, force_check=False):
     # check if identical
     for file in files_abs:
         if force_check and file not in known_sums:
-            logger.error("Checksum for file {} not known".format(file))
-            raise ValueError("Checksum for file {} not known".format(file))
+            logger.error("Checksum for file %s not known", file)
+            raise ValueError("Checksum for file %s not known" % file)
         if file in known_sums and known_sums[file] != real_sums[file]:
             logger.warn("Incorrect checksum for file " + str(file))
             raise ValueError("Invalid checksum for file " + str(file))
@@ -163,7 +163,7 @@ def get_correct_user_group():
     try:
         groupid = grp.getgrnam(group)
     except KeyError:
-        raise ValueError("group {} does not exist".format(group))
+        raise ValueError("group %s does not exist" % group)
     return userid, groupid
 
 
@@ -211,7 +211,7 @@ def check_output_permissions(path):
 
 def copy(file, dest, checksums_file=None):
     """ TODO add call to checksums """
-    logger.debug("copying file {} to {}".format(file, dest))
+    logger.debug("copying file %s to %s", file, dest)
     file = os.path.abs(file)
     if os.path.isfile(file):
         copy = shutil.copyfile
@@ -223,7 +223,7 @@ def copy(file, dest, checksums_file=None):
 
 def to_openbis(file, new_name, checksums_file=None):
     """ Copy this file or directory to the openbis export directory """
-    logger.debug("Export {} to OpenBis".format(file))
+    logger.debug("Export %s to OpenBis", file)
     file = os.path.abspath(file)
     dest = os.path.join(os.path.split(file)[0],
                         'to_openbis',
@@ -299,8 +299,7 @@ def listen(path, interval):
         for marker in glob.glob(MARKER_NAME + '*'):
             file = marker[len(MARKER_NAME):]
             if not os.path.exists(file):
-                logger.error("Marker {} exists, but {} does not"
-                             .format(marker, file))
+                logger.error("Marker %s exists, but %s does not", marker, file)
             if file in ignored_files:
                 continue
             try:
