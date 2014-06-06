@@ -4,12 +4,10 @@
 from __future__ import print_function
 
 import re
-import pathlib
 import string
 import os
 import pwd
 import grp
-import stat
 import subprocess
 import argparse
 import time
@@ -19,6 +17,7 @@ import ast
 import logging
 import atexit
 import signal
+import glob
 
 
 logger = None
@@ -47,7 +46,6 @@ def init_logging(logfile, loglevel, name):
 
 
 def read_checksums(string, basedir):
-    basedir = pathlib.Path(basedir)
     csums = {}
     for line in string.splitlines():
         csum, name = line.split(maxsplit=1)
@@ -61,11 +59,9 @@ def checksums(files, checksums_file, write_checksums=False, force_check=False):
     if not files:
         return
 
-    checksums_file = pathlib.Path(checksums_file)
-    basedir = checksums_file.parent.resolve()
-    files = [str(p) for p in files]
-    files_abs = [pathlib.Path(p).resolve() for p in files]
-    files_rel = [str(file.relative_to(basedir)) for file in files_abs]
+    basedir = os.path.dirname(os.path.abspath(checksums_file))
+    files_abs = [os.path.abspath(p) for p in files]
+    files_rel = [os.path.relpath(file, basedir) for file in files_abs]
 
     # read old checksums from checksums_file
     try:
@@ -93,7 +89,7 @@ def checksums(files, checksums_file, write_checksums=False, force_check=False):
 
     # write all real checksums to file
     if write_checksums:
-        with checksums_file.open('w') as f:
+        with open(checksums_file, 'w') as f:
             f.write(csums)
 
 
@@ -115,7 +111,6 @@ def extract_barcode(path):
 
     Barcodes must match this regular expression: [A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]
     """
-    path = pathlib.Path(path)
     barcodes = re.findall(BARCODE_REGEX, path.stem)
     barcodes = [b for b in barcodes if is_valid_barcode(b)]
     if not barcodes:
@@ -140,21 +135,22 @@ def generate_name(path):
     >>> generate_name(path)
     'QJFDC010EU_stpidnameQJFDC010EU.raw'
     """
-    path = pathlib.Path(path)
     barcode = extract_barcode(path)
 
     allowed_chars = string.ascii_letters + string.digits + '_'
 
-    cleaned_stem = ''.join(i for i in path.stem if i in allowed_chars)
+    stem, suffix = os.path.splitext(os.path.basename(path))
+
+    cleaned_stem = ''.join(i for i in stem if i in allowed_chars)
     if not cleaned_stem:
         logger.error("Very strange file name: " + str(path))
         raise ValueError("Invalid file name")
 
-    if not all(i in allowed_chars + '.' for i in path.suffix):
+    if not all(i in allowed_chars + '.' for i in suffix):
         logger.error("Got file with invalid chars in suffix: " + str(path))
-        raise ValueError("Bad file suffix: " + path.suffix)
+        raise ValueError("Bad file suffix: " + suffix)
 
-    return barcode + '_' + cleaned_stem + path.suffix
+    return barcode + '_' + cleaned_stem + suffix
 
 
 def get_correct_user_group():
@@ -176,16 +172,15 @@ def check_input_permissions(path):
     This is not a security check, but it should find configuration
     issues of upstream tools.
     """
-    path = pathlib.Path(path)
     userid, groupid = get_correct_user_group()
     error = "invalid file permissions"
 
-    if not path.stat().st_uid == userid:
+    if not os.stat(path).st_uid == userid:
         logger.critical(error)
-        raise ValueError("Invalid file owner: " + str(path))
-    if path.stat().st_mode % 0o1000 != 0o600:
+        raise ValueError("Invalid file owner: " + path)
+    if os.stat(path).st_mode % 0o1000 != 0o600:
         logger.critical(error)
-        raise ValueError("Invalid file permissions: " + str(path))
+        raise ValueError("Invalid file permissions: " + path)
 
 
 def check_output_permissions(path):
@@ -194,37 +189,36 @@ def check_output_permissions(path):
     This is not a security check, but it should find configuration
     issues of this tool.
     """
-    path = pathlib.Path(path)
     userid, groupid = get_correct_user_group()
     error = "invalid file permissions"
 
-    if not path.stat().st_uid == userid:
+    if not os.stat(path).st_uid == userid:
         logger.critical(error)
-        raise ValueError("Invalid file owner: " + str(path))
-    if not path.stat().stat.st_gid == groupid:
+        raise ValueError("Invalid file owner: " + path)
+    if not os.stat(path).stat.st_gid == groupid:
         logger.critical(error)
-        raise ValueError("Invalid group: " + str(path))
-    if path.stat().st_mode % 0o1000 != 0o660:
+        raise ValueError("Invalid group: " + path)
+    if os.stat(path).st_mode % 0o1000 != 0o660:
         logger.critical(error)
-        raise ValueError("Invalid file permissions: " + str(path))
+        raise ValueError("Invalid file permissions: " + path)
 
 
 def copy(file, dest, checksums_file=None):
     """ TODO add call to checksums """
     logger.debug("copying file {} to {}".format(file, dest))
-    file = pathlib.Path(file).resolve()
-    if file.is_file():
+    file = os.path.abs(file)
+    if os.path.isfile(file):
         copy = shutil.copyfile
-    elif file.is_dir():
+    elif os.path.isdir(file):
         copy = shutil.copytree  # TODO uses shutil.copy2, copies mode
-    copy(str(file), str(dest))
+    copy(file, dest)
     check_output_permissions(dest)
 
 
 def to_openbis(file, new_name, checksums_file=None):
     """ Copy this file or directory to the openbis export directory """
     logger.debug("Export {} to OpenBis".format(file))
-    file = pathlib.Path(file).resolve()
+    file = os.path.abspath(file)
     copy(file, file.parent / 'to_openbis' / new_name,
          checksums_file=checksums_file)
 
@@ -235,58 +229,51 @@ def to_storage(file, new_name, checksums_file=None):
 
 def to_manual(file, checksums_file=None):
     """ Copy this file or directory to the directory for manual intervention"""
-    file = pathlib.Path(file).resolve()
-    copy(file, file.parent / 'manual_intervention' / file.name,
-         checksums_file=None)
+    file = os.path.abspath(file)
+    dest = os.path.join(os.path.split(file)[0],
+                        'manual_intervention',
+                        os.path.basename(file))
+    copy(file, dest, checksums_file=None)
 
 
-def call_openbis(basedir):
-    """ Tell OpenBis that new files in 'to_openbis' are ready"""
-    (pathlib.Path(basedir) / 'to_openbis' / MARKER_NAME).touch()
-
-
-def handle_files(basedir, files):
-    basedir = pathlib.Path(basedir).resolve()
-    checksums_file = basedir / 'checksums.txt'
-    assert basedir.is_dir()
+def handle_file(basedir, file):
+    basedir = os.path.abspath(basedir)
+    assert os.path.isdir(basedir)
+    checksums_file = os.path.join(basedir, 'checksums.txt')
 
     try:
-        openbis_files = False
-        manual_files = False
-        for file in files:
-            logger.debug("processing file " + str(file))
-            file = file.resolve()
+        manual_file = False
+        logger.debug("processing file " + str(file))
+        file = os.path.abspath(file)
 
-            if file.is_dir():
-                to_manual(file, checksums_file=checksums_file)
-                manual_files = True
-                continue
+        if os.path.isdir(file):
+            to_manual(file, checksums_file=checksums_file)
+            manual_file = True
 
+        else:
             try:
                 new_name = generate_name(file)
             except ValueError:
                 to_manual(file, checksums_file=checksums_file)
-                manual_files = True
+                manual_file = True
             else:
                 to_storage(file, new_name, checksums_file=checksums_file)
                 to_openbis(file, new_name, checksums_file=checksums_file)
-                openbis_files = True
 
-        if openbis_files:
-            call_openbis(basedir)
-        if manual_files:
-            logger.critical("manual intervention is required for some files")
+        if manual_file:
+            logger.critical("manual intervention is required for a file")
     except Exception:
         logger.exception("An error occured while moving files: ")
         (basedir / 'ERROR').touch()
         raise
     else:
-        for file in files:
-            logger.debug("Removing file " + str(file))
-            if file.is_file():
-                file.unlink()
-            elif file.is_dir():
-                shutil.rmtree(str(file))
+        logger.debug("Removing file " + str(file))
+        if os.path.isfile(file):
+            os.remove(file)
+        elif os.path.isfile(file):
+            shutil.rmtree(str(file))
+        else:
+            logger.error("Could not remove file " + file)
 
 
 def listen(path, interval):
@@ -298,27 +285,35 @@ def listen(path, interval):
     """
     logger.info("Starting to listen in " + str(path))
     os.chdir(str(path))
-    ignored_files = [path / file for file in IGNORED_FILES]
+    ignored_files = [os.path.join(path, file) for file in IGNORED_FILES]
     while True:
-        if (path / MARKER_NAME).exists():
-            files = [f for f in path.iterdir() if f not in ignored_files]
+        for marker in glob.glob(MARKER_NAME + '*'):
+            file = marker[len(MARKER_NAME):]
+            if not os.path.exists(file):
+                logger.error("Marker {} exists, but {} does not"
+                             .format(marker, file))
+            if file in ignored_files:
+                continue
             try:
-                logger.info("New set of files arrived")
-                for file in files:
-                    check_input_permissions(file)
+                logger.info("New file arrived: " + file)
+                check_input_permissions(file)
                 try:
-                    checksums(files, checksums_file=path / 'checksums.txt',
-                              write_checksums=True)
+                    checksums(
+                        [file],
+                        checksums_file=os.path.join(path, 'checksums.txt'),
+                        write_checksums=True
+                    )
                 except ValueError:
-                    (path / 'CHECKSUMS_DO_NOT_MATCH').touch()
+                    with open('CHECKSUMS_DO_NOT_MATCH', 'w'):
+                        pass
                     raise ValueError("Invalid checksums")
 
-                handle_files(path, files)
-                logger.info("Finished processing files. Cleaning up")
-                if (path / MARKER_NAME).exists():
-                    (path / MARKER_NAME).unlink()
-                if (path / 'checksums.txt').exists():
-                    (path / 'checksums.txt').unlink()
+                handle_file(path, file)
+                logger.info("Finished processing file. Cleaning up")
+                try:
+                    os.remove(marker)
+                except OSError:
+                    logger.error("Marker file vanished: " + marker)
             except Exception:
                 logger.exception("An unexpected error:")
         time.sleep(interval)
@@ -400,9 +395,8 @@ def daemonize(func, pidfile, *args, **kwargs):
 
 def main():
     args = parse_args()
-    try:
-        path = pathlib.Path(args.dropboxdir).resolve()
-    except OSError:
+    path = os.path.abspath(args.dropboxdir)
+    if not os.path.exists(path):
         print("Could not find dropboxdir", file=sys.stderr)
     init_logging(args.logfile, args.loglevel, path.stem)
 
@@ -415,7 +409,7 @@ def main():
         get_correct_user_group = lambda: (0, 0)
 
     # sanity checks for dropboxdir
-    if not path.is_dir():
+    if not os.path.isdir(path):
         print(args.dropboxdir + " is not a directory", file=sys.stderr)
         sys.exit(1)
     try:
@@ -424,10 +418,10 @@ def main():
         print("dropboxdir has invalid permissions", file=sys.stderr)
         sys.exit(1)
 
-    if not (path / 'to_openbis').is_dir():
+    if not os.path.isdir(os.path.join(path, 'to_openbis')):
         print("dropboxdir must contain dir 'to_openbis'", file=sys.stderr)
         sys.exit(1)
-    if not (path / 'manual_intervention').is_dir():
+    if not os.path.isdir(os.path.join(path, 'manual_intervention')):
         print("dropboxdir must contain dir 'manual_intervention'",
               file=sys.stderr)
         sys.exit(1)
