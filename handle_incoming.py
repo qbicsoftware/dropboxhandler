@@ -183,7 +183,7 @@ def check_input_permissions(path):
     if not path.stat().st_uid == userid:
         logger.critical(error)
         raise ValueError("Invalid file owner: " + str(path))
-    if path.stat().filemode(stat) != "-rw-------":
+    if path.stat().st_mode % 0o1000 != 0o600:
         logger.critical(error)
         raise ValueError("Invalid file permissions: " + str(path))
 
@@ -204,7 +204,7 @@ def check_output_permissions(path):
     if not path.stat().stat.st_gid == groupid:
         logger.critical(error)
         raise ValueError("Invalid group: " + str(path))
-    if path.stat().filemode(stat) != "-rw-rw----":
+    if path.stat().st_mode % 0o1000 != 0o660:
         logger.critical(error)
         raise ValueError("Invalid file permissions: " + str(path))
 
