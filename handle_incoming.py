@@ -195,12 +195,17 @@ def check_output_permissions(path):
     if not os.stat(path).st_uid == userid:
         logger.critical(error)
         raise ValueError("Invalid file owner: " + path)
-    if not os.stat(path).stat.st_gid == groupid:
+    if not os.stat(path).st_gid == groupid:
         logger.critical(error)
         raise ValueError("Invalid group: " + path)
-    if os.stat(path).st_mode % 0o1000 != 0o660:
-        logger.critical(error)
-        raise ValueError("Invalid file permissions: " + path)
+    if os.path.isdir(path):
+        if os.stat(path).st_mode % 0o1000 != 0o770:
+            logger.critical(error)
+            raise ValueError("Invalid permissions for directory: " + path)
+    else:
+        if os.stat(path).st_mode % 0o1000 != 0o660:
+            logger.critical(error)
+            raise ValueError("Invalid file permissions: " + path)
 
 
 def copy(file, dest, checksums_file=None):
