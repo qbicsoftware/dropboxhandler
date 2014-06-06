@@ -50,7 +50,7 @@ def read_checksums(string, basedir):
     for line in string.splitlines():
         csum, name = line.split(maxsplit=1)
         name = ast.literal_eval('"""' + line + '"""')
-        csums[basedir / name] = csum
+        csums[os.path.join(basedir, name)] = csum
     return csums
 
 
@@ -111,7 +111,8 @@ def extract_barcode(path):
 
     Barcodes must match this regular expression: [A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]
     """
-    barcodes = re.findall(BARCODE_REGEX, path.stem)
+    stem, suffix = os.path.splitext(os.path.basename(path))
+    barcodes = re.findall(BARCODE_REGEX, stem)
     barcodes = [b for b in barcodes if is_valid_barcode(b)]
     if not barcodes:
         raise ValueError("no barcodes found")
@@ -224,8 +225,10 @@ def to_openbis(file, new_name, checksums_file=None):
     """ Copy this file or directory to the openbis export directory """
     logger.debug("Export {} to OpenBis".format(file))
     file = os.path.abspath(file)
-    copy(file, file.parent / 'to_openbis' / new_name,
-         checksums_file=checksums_file)
+    dest = os.path.join(os.path.split(file)[0],
+                        'to_openbis',
+                        new_name)
+    copy(file, dest, checksums_file=checksums_file)
 
 
 def to_storage(file, new_name, checksums_file=None):
@@ -269,7 +272,8 @@ def handle_file(basedir, file):
             logger.critical("manual intervention is required for a file")
     except Exception:
         logger.exception("An error occured while moving files: ")
-        (basedir / 'ERROR').touch()
+        with open(os.path.join(basedir, 'ERROR'), 'w'):
+            pass
         raise
     else:
         logger.debug("Removing file " + str(file))
