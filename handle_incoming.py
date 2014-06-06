@@ -380,8 +380,13 @@ def daemonize(func, pidfile, *args, **kwargs):
 
     pidfile = os.path.expanduser(str(pidfile))
 
+    # open(file, 'x') not available in python 2.6
+    if os.path.exists(pidfile):
+        print("Pidfile exists. Is another daemon running?")
+        sys.exit(1)
+
     try:
-        with open(pidfile, 'x') as f:
+        with open(pidfile, 'w') as f:
             f.write(str(os.getpid()) + '\n')
     except OSError:
         print("Could not write pidfile. Is another daemon running?",
