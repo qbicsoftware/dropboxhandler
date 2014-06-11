@@ -274,14 +274,14 @@ def run_rsync(source, dest):
         '--chmod=Dug+rwx,Do-rwx,Fug+rw,Fo-rwx',
         #'--numeric-ids',
         #'--chown=%s:%s' % (userid, groupid),
-        '--link-dest=%s' % source,  # Should be removed if dest on other fs
         '--',  # end options, in case files start with '-'
         str(source),
         str(dest),
     ]
 
+    # TODO should not happen, if dest on other fs
     if os.path.isdir(source):
-        command.insert(1, '--link-dest%s' % source)
+        command.insert(1, '--link-dest=%s' % source)
 
     rsync = subprocess.Popen(
         command,
