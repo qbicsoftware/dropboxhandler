@@ -202,7 +202,8 @@ def check_input_permissions(path):
         for path, dirnames, filenames in os.walk(path):
             _check_perms(path, userid, groupid, 0o700, 0o600)
             for name in filenames:
-                _check_perms(name, userid, groupid, 0o700, 0o600)
+                _check_perms(os.path.join(path, name),
+                             userid, groupid, 0o700, 0o600)
 
 
 def check_output_permissions(path):
@@ -218,7 +219,8 @@ def check_output_permissions(path):
         for path, dirnames, filenames in os.walk(path):
             _check_perms(path, userid, groupid, 0o770, 0o660)
             for name in filenames:
-                _check_perms(name, userid, groupid, 0o770, 0o660)
+                _check_perms(os.path.join(path, name),
+                             userid, groupid, 0o770, 0o660)
 
 
 def init_signal_handler():
