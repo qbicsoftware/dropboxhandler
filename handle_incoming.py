@@ -252,7 +252,7 @@ def run_rsync(source, dest):
             '--itemize-changes',  # return list of changed files
             '--no-group',  # set by chown
             '--perms',  # or else chmod does not get applied
-            '--chmod=D770,F660',
+            '--chmod=Dug+rwx,Do-rwx,Fug+rw,Fo-rwx',
             '--numeric-ids',
             '--chown=%s:%s' % (userid, groupid),
             '--link-dest=%s' % source,  # Should be removed if dest on other fs
@@ -269,7 +269,7 @@ def run_rsync(source, dest):
     if err != b'':
         logging.error("Stderr of rsync: %s", err.decode())
     if rsync.returncode:
-        raise subprocess.CalledProcessError(
+        raise subprocess.IOError(
             "Error executing rsync. error code %s" % rsync.returncode
         )
 
