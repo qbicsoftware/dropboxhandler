@@ -267,7 +267,7 @@ def run_rsync(source, dest):
     out, err = rsync.communicate()
     changed = out
     if err != b'':
-        logging.error("Stderr of rsync: %s", err.decode(errors='ignore'))
+        logging.error("Stderr of rsync: %s", err)
     if rsync.returncode:
         raise IOError(
             "Error executing rsync. error code %s" % rsync.returncode
@@ -312,7 +312,7 @@ def copy(file, dest, checksums=True, maxtries=2):
                          changed)
     else:
         logging.error("Retried copying and checksums still differ " +
-                      "for files:\n%s", changed.decode(errors='ignore'))
+                      "for files:\n%s", changed)
         raise OSError("Bit errors while copying")
     check_output_permissions(dest)
 
