@@ -98,7 +98,7 @@ def checksum(file, write_checksum=True):
                 ['sha256sum', '-b', '--', file],
                 cwd=basedir,
             )
-            csum, _ = csum_line.split(maxsplit=1)
+            csum = csum_line.split()[0]
             base, ext = os.path.splitext(file)
 
             if not len(csum) == 64:
