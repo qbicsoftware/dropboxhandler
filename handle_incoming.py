@@ -262,24 +262,29 @@ def run_rsync(source, dest):
         source = source + '/'
 
     userid, groupid = get_output_user_group()
+    command = [
+        'rsync',
+        '--timeout=500',  # timeout if no IO for 500 s
+        '--safe-links',  # symlinks outside tree are a security issue
+        '--checksum',
+        '--recursive',
+        '--itemize-changes',  # return list of changed files
+        '--no-group',  # set by chown
+        '--perms',  # or else chmod does not get applied
+        '--chmod=Dug+rwx,Do-rwx,Fug+rw,Fo-rwx',
+        #'--numeric-ids',
+        #'--chown=%s:%s' % (userid, groupid),
+        '--link-dest=%s' % source,  # Should be removed if dest on other fs
+        '--',  # end options, in case files start with '-'
+        str(source),
+        str(dest),
+    ]
+
+    if os.path.isdir(source):
+        command.insert(1, '--link-dest%s' % source)
+
     rsync = subprocess.Popen(
-        [
-            'rsync',
-            '--timeout=500',  # timeout if no IO for 500 s
-            '--safe-links',  # symlinks outside tree are a security issue
-            '--checksum',
-            '--recursive',
-            '--itemize-changes',  # return list of changed files
-            '--no-group',  # set by chown
-            '--perms',  # or else chmod does not get applied
-            '--chmod=Dug+rwx,Do-rwx,Fug+rw,Fo-rwx',
-            #'--numeric-ids',
-            #'--chown=%s:%s' % (userid, groupid),
-            '--link-dest=%s' % source,  # Should be removed if dest on other fs
-            '--',  # end options, in case files start with '-'
-            str(source),
-            str(dest),
-        ],
+        command,
         stderr=subprocess.PIPE,
         stdout=subprocess.PIPE,
         shell=False,
