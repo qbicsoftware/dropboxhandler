@@ -253,8 +253,8 @@ def run_rsync(source, dest):
             '--no-group',  # set by chown
             '--perms',  # or else chmod does not get applied
             '--chmod=Dug+rwx,Do-rwx,Fug+rw,Fo-rwx',
-            '--numeric-ids',
-            '--chown=%s:%s' % (userid, groupid),
+            #'--numeric-ids',
+            #'--chown=%s:%s' % (userid, groupid),
             '--link-dest=%s' % source,  # Should be removed if dest on other fs
             '--',  # end options, in case files start with '-'
             str(source),
