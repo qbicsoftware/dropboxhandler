@@ -1,5 +1,9 @@
+# coding: utf8
+
 from nose.tools import *
 from handle_incoming import *
+
+init_logging(None, 'DEBUG', 'testlog')
 
 
 @raises(ValueError)
