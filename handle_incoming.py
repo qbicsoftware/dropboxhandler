@@ -19,6 +19,25 @@ import signal
 import glob
 
 
+# python 2.6 compat
+if not hasattr(subprocess, 'check_output'):
+    def check_output(*args, **kwargs):
+        kwargs['stdout'] = subprocess.PIPE
+        try:
+            proc = subprocess.Popen(*args, **kwargs)
+            stdout, stderr = proc.communicate()
+        except:
+            proc.kill()
+            proc.wait()
+            raise
+        retcode = proc.poll()
+        if retcode:
+            raise subprocess.CalledProcessError(
+                retcode, list(args[0])
+            )
+
+    subprocess.check_output = check_output
+
 logger = None
 
 BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
