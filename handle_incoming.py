@@ -267,7 +267,7 @@ def run_rsync(source, dest):
     out, err = rsync.communicate()
     changed = out
     if err != b'':
-        logging.error("Stderr of rsync: %s", err.decode())
+        logging.error("Stderr of rsync: %s", err.decode(errors='ignore'))
     if rsync.returncode:
         raise IOError(
             "Error executing rsync. error code %s" % rsync.returncode
