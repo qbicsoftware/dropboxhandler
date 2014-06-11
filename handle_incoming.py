@@ -238,8 +238,8 @@ def init_signal_handler():
 
 
 def run_rsync(source, dest):
-    if os.path.isdir(file) and file[-1] != '/':
-        file = file + '/'
+    if os.path.isdir(source) and source[-1] != '/':
+        source = source + '/'
 
     userid, groupid = get_output_user_group()
     rsync = subprocess.Popen(
@@ -255,9 +255,9 @@ def run_rsync(source, dest):
             '--chmod=D770,F660',
             '--numeric-ids',
             '--chown=%s:%s' % (userid, groupid),
-            '--link-dest=%s' % file,  # Should be removed, if dest on other fs
+            '--link-dest=%s' % source,  # Should be removed if dest on other fs
             '--',  # end options, in case files start with '-'
-            str(file),
+            str(source),
             str(dest),
         ],
         stderr=subprocess.PIPE,
