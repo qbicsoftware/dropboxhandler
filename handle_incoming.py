@@ -35,6 +35,7 @@ if not hasattr(subprocess, 'check_output'):
             raise subprocess.CalledProcessError(
                 retcode, list(args[0])
             )
+        return stdout
 
     subprocess.check_output = check_output
 
