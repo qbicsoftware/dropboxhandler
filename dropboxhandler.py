@@ -671,6 +671,8 @@ def close_open_dfs():
 
 
 def configure_permissions(args):
+    global check_input_permissions, check_output_permissions
+    global get_output_user_group
     if args['permissions']:
         userid, groupid = get_output_user_group()
         try:
@@ -681,8 +683,6 @@ def configure_permissions(args):
             sys.exit(1)
     else:
         # overwrite permission checking with stubs
-        global check_input_permissions, check_output_permissions
-        global get_output_user_group
         check_output_permissions = lambda x: None
         check_input_permissions = lambda x: None
         get_output_user_group = lambda: (1000, 1000)
