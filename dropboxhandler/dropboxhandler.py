@@ -107,7 +107,7 @@ def write_checksum(file):
         raise ValueError("%s has no files to checksum", file)
 
     try:
-        with open(checksum_file, 'xb') as f:
+        with open(checksum_file, 'wb') as f:
             for file in files:
                 csum_line = subprocess.check_output(
                     ['sha256sum', '-b', '--', file],
