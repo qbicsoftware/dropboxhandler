@@ -545,7 +545,7 @@ def parse_args():
         print("Config file must include section 'paths'", file=sys.stderr)
         sys.exit(1)
 
-    return merge_configuration(args, config, defaults)
+    return merge_configuration(vars(args), config, defaults)
 
 
 def merge_configuration(args, config, defaults):
