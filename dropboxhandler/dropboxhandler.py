@@ -549,7 +549,10 @@ def parse_args():
 
 
 def merge_configuration(args, config, defaults):
-    cleaned_args = {key: val for key, val in args.items() if val is not None}
+    cleaned_args = {}
+    for key in args:
+        if args[key] is not None:
+            cleaned_args[key] = args[key]
 
     cleaned_config = {}
     cleaned_config['paths'] = {}
