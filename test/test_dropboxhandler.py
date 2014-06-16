@@ -1,6 +1,6 @@
 # coding: utf8
 
-from handle_incoming import (
+from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
     write_checksum, recursive_link, generate_openbis_name
 )
@@ -91,7 +91,7 @@ def test_write_checksum():
 
 
 @istest
-@mock.patch('handle_incoming.logger')
+@mock.patch('dropboxhandler.dropboxhandler.logger')
 def test_recursive_link(mock_logger):
     base = tempfile.mkdtemp()
 
