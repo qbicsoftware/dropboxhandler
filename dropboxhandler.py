@@ -14,9 +14,18 @@ import time
 import sys
 import shutil
 import logging
+import logging.config
 import atexit
 import signal
 import glob
+import traceback
+import stat
+import tempfile
+import resource
+try:
+    import configparser
+except ImportError:
+    import ConfigParser as configparser
 
 
 # python 2.6 compat
@@ -39,31 +48,40 @@ if not hasattr(subprocess, 'check_output'):
 
     subprocess.check_output = check_output
 
+
 logger = None
 
 BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
-MARKER_NAME = ".MARKER_is_finished_"
-IGNORED_FILES = ['to_openbis', 'manual_intervention']
+FINISHED_MARKER = ".MARKER_is_finished_"
+ERROR_MARKER = "MARKER_error_"
 
 
-def init_logging(logfile, loglevel, name):
+def init_logging(options):
     global logger
-    logger = logging.getLogger(name)
 
-    if logfile is not None:
+    if 'logfile' in options:
         logging.basicConfig(
-            level=getattr(logging, loglevel),
-            filename=logfile,
+            level=getattr(logging, options['loglevel']),
+            filename=options['logfile'],
         )
     else:
         logging.basicConfig(
-            level=getattr(logging, loglevel),
+            level=getattr(logging, options['loglevel']),
             stream=sys.stdout,
         )
 
+    if 'conf_file' in options and options['conf_file']:
+        try:
+            logging.config.fileConfig(options['conf_file'],
+                                      disable_existing_loggers=True)
+        except Exception as e:
+            print("Could not load logging information from config file", e)
 
-def checksum(file, write_checksum=True):
-    """ Check ckecksums if available and write new checksums if not.
+    logger = logging.getLogger()
+
+
+def write_checksum(file):
+    """ Compute checksums of file or of contents, if file is dir.
 
     Checksums will be written to <inputfile>.sha256 in the
     format of the sha256sum tool.
@@ -71,40 +89,40 @@ def checksum(file, write_checksum=True):
     If file is a directory, the checksum file will include the
     checksums of all files in that dir.
     """
-
+    file = os.path.abspath(file)
     basedir = os.path.split(file)[0]
     checksum_file = str(file) + '.sha256'
-    if os.path.exists(checksum_file):
-        subprocess.check_call(
-            ['sha256sum', '-c', '--', checksum_file],
-            cwd=basedir,
-        )
-    if not write_checksum:
-        return
 
     files = subprocess.check_output(
         [
             'find',
-            str(file),
+            os.path.basename(file),
             '-type', 'f',
             '-print0'
         ],
         cwd=basedir,
     ).split(b'\0')[:-1]
 
-    with open(checksum_file, 'wb') as f:
-        for file in files:
-            csum_line = subprocess.check_output(
-                ['sha256sum', '-b', '--', file],
-                cwd=basedir,
-            )
-            csum = csum_line.split()[0]
-            base, ext = os.path.splitext(file)
+    if not files:
+        raise ValueError("%s has no files to checksum", file)
 
-            if not len(csum) == 64:
-                raise TypeError('Could not parse sha256sum output')
+    try:
+        with open(checksum_file, 'xb') as f:
+            for file in files:
+                csum_line = subprocess.check_output(
+                    ['sha256sum', '-b', '--', file],
+                    cwd=basedir,
+                )
+                csum = csum_line.split()[0]
+                base, ext = os.path.splitext(file)
 
-            f.write(csum_line)
+                if not len(csum) == 64:
+                    raise ValueError('Could not parse sha256sum output')
+
+                f.write(csum_line)
+    except OSError:
+        logging.exception('Could not write checksum file. Does it exist?')
+        raise
 
 
 def is_valid_barcode(barcode):
@@ -117,12 +135,12 @@ def is_valid_barcode(barcode):
         csum += 7
     if barcode[-1] == chr(csum):
         return True
-    logging.error("got invalid barcode: %s", barcode)
+    logging.warn("got invalid barcode: %s", barcode)
     return False
 
 
 def extract_barcode(path):
-    """ Extract a OpenBis barcode from the file name.
+    """ Extract an OpenBis barcode from the file name.
 
     If a barcode is found, return it. Raise ValueError if no barcode,
     or more that one barcode has been found.
@@ -154,10 +172,10 @@ def clean_filename(path):
         logger.error("Got file with invalid chars in suffix: " + str(path))
         raise ValueError("Bad file suffix: " + suffix)
 
-    return cleaned_stem + suffix
+    return cleaned_stem + suffix.lower()
 
 
-def generate_name(path):
+def generate_openbis_name(path):
     """ Generate a sane file name from the input file
 
     Copy the barcode to the front and remove invalid characters.
@@ -166,8 +184,8 @@ def generate_name(path):
 
     Example
     -------
-    >>> path = "stüpid\tname(<QJFDC010EU.).>ä.raw"
-    >>> generate_name(path)
+    >>> path = "stüpid\tname(<QJFDC010EU.).>ä.raW"
+    >>> generate_openbis_name(path)
     'QJFDC010EU_stpidnameQJFDC010EU.raw'
     """
     barcode = extract_barcode(path)
@@ -189,24 +207,34 @@ def get_output_user_group():
 
 
 def _check_perms(path, userid, groupid, dirmode, filemode):
-    if not os.stat(path).st_uid == userid:
+    if userid and os.stat(path).st_uid != userid:
         logger.critical("userid of file %s should be %s but is %s",
                         path, userid, os.stat(path).st_uid)
-    if not os.stat(path).st_gid == groupid:
+    if groupid and os.stat(path).st_gid != groupid:
         logger.critical("groupid of file %s should be %s but is %s",
                         path, groupid, os.stat(path).st_gid)
+
     if os.path.isdir(path):
         if os.stat(path).st_mode % 0o1000 != dirmode:
-            logger.critical("mode of dir %s should be %s but is %s",
-                            path, dirmode, os.stat(path).st_mode)
+            logger.critical("mode of dir %s should be %o but is %o",
+                            path, dirmode, os.stat(path).st_mode % 0o1000)
     elif os.path.islink(path):
         logging.critical("symbolic links are not allowed: %s", path)
     elif os.path.isfile(path):
         if os.stat(path).st_mode % 0o1000 != filemode:
-            logger.critical("mode of file %s should be %s but is %s",
-                            path, filemode, os.stat(path).st_mode)
+            logger.critical("mode of file %s should be %o but is %o",
+                            path, filemode, os.stat(path).st_mode % 0o1000)
     else:
         logger.critical("should be a regular file or dir: %s", path)
+
+
+def _check_perms_recursive(path, userid, groupid, dirmode, filemode):
+    _check_perms(path, userid, groupid, dirmode, filemode)
+    for path, dirnames, filenames in os.walk(path):
+        _check_perms(path, userid, groupid, dirmode, filemode)
+        for name in filenames:
+            _check_perms(os.path.join(path, name),
+                         userid, groupid, dirmode, filemode)
 
 
 def check_input_permissions(path):
@@ -216,14 +244,14 @@ def check_input_permissions(path):
 
     Will not raise errors, but write them to logger.
     """
-    userid, groupid = get_output_user_group()
+    try:
+        userid, groupid = get_output_user_group()
+    except ValueError:
+        logger.critical("Output group does not exist. Files may be " +
+                        "accessible for unauthorized users")
+        return
 
-    if os.path.isdir(path):
-        for path, dirnames, filenames in os.walk(path):
-            _check_perms(path, userid, groupid, 0o700, 0o600)
-            for name in filenames:
-                _check_perms(os.path.join(path, name),
-                             userid, groupid, 0o700, 0o600)
+    _check_perms_recursive(path, userid, None, 0o700, 0o600)
 
 
 def check_output_permissions(path):
@@ -233,254 +261,339 @@ def check_output_permissions(path):
 
     Will not raise errors, but write them to logger.
     """
-    userid, groupid = get_output_user_group()
+    try:
+        userid, groupid = get_output_user_group()
+    except ValueError:
+        logger.critical("Output group does not exist. Files may be " +
+                        "accessible for unauthorized users")
+        return
 
-    if os.path.isdir(path):
-        for path, dirnames, filenames in os.walk(path):
-            _check_perms(path, userid, groupid, 0o770, 0o660)
-            for name in filenames:
-                _check_perms(os.path.join(path, name),
-                             userid, groupid, 0o770, 0o660)
+    _check_perms_recursive(path, userid, groupid, 0o770, 0o660)
+
+
+def adjust_permissions(path):
+    try:
+        userid, groupid = get_output_user_group()
+    except ValueError:
+        logger.critical("Output group does not exist. Files may be " +
+                        "accessible for unauthorized users")
+        return
+
+    def adjust(file):
+        os.chown(file, userid, groupid)
+        if os.path.isdir(file):
+            os.chmod(file, 0o770)
+        else:
+            os.chmod(file, 0o660)
+
+    adjust(path)
+    for root, dirs, files in os.walk(path):
+        for file in dirs + files:
+            adjust(file)
 
 
 def init_signal_handler():
     def handler(sig, frame):
         if sig == signal.SIGTERM:
             logging.info("Daemon got SIGTERM. Shutting down.")
-            sys.exit(1)
+            sys.exit(0)
         elif sig == signal.SIGCONT:
             logging.info("Daemon got SIGCONT. Continuing.")
+        elif sig == signal.SIGINT:
+            logging.info("Daemon got SIGINT. Shutting down.")
+            sys.exit(0)
         else:
             logging.error("Signal handler did not expect to get %s", sig)
 
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGCONT, handler)
+    signal.signal(signal.SIGINT, handler)
 
 
-def run_rsync(source, dest):
-    if os.path.isdir(source) and source[-1] != '/':
-        source = source + '/'
+def recursive_link(source, dest, tmpdir=None):
+    source = os.path.abspath(source)
+    dest = os.path.abspath(dest)
+    destbase, destname = os.path.split(dest)
+    if destname.startswith(FINISHED_MARKER):
+        logger.error("Can not copy to destination that looks like a marker")
+        raise ValueError("Illegal destination file: %s", dest)
 
-    userid, groupid = get_output_user_group()
+    tmpdir = tempfile.mkdtemp(dir=tmpdir)
+    workdest = os.path.join(tmpdir, destname)
+
+    logger.debug("Linking files in %s to workdir %s", source, workdest)
+
     command = [
-        'rsync',
-        '--timeout=500',  # timeout if no IO for 500 s
-        '--safe-links',  # symlinks outside tree are a security issue
-        '--checksum',
+        'cp',
+        '--link',
+        '--no-dereference',  # symbolic links could point anywhere
         '--recursive',
-        '--itemize-changes',  # return list of changed files
-        '--no-group',  # set by chown
-        '--perms',  # or else chmod does not get applied
-        '--chmod=Dug+rwx,Do-rwx,Fug+rw,Fo-rwx',
-        #'--numeric-ids',
-        #'--chown=%s:%s' % (userid, groupid),
-        '--',  # end options, in case files start with '-'
+        '--',
         str(source),
-        str(dest),
+        str(workdest),
     ]
 
-    # TODO should not happen, if dest on other fs
-    if os.path.isdir(source):
-        command.insert(1, '--link-dest=%s' % source)
+    try:
+        subprocess.check_call(command, shell=False)
 
-    rsync = subprocess.Popen(
-        command,
-        stderr=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        shell=False,
-    )
-    out, err = rsync.communicate()
-    changed = out
-    if err != b'':
-        logging.error("Stderr of rsync: %s", err)
-    if rsync.returncode:
-        raise IOError(
-            "Error executing rsync. error code %s" % rsync.returncode
-        )
+        # remove symlinks from output
+        for root, dirs, files, rootdf in os.fwalk(workdest):
+            for file in dirs + files:
 
-    return changed
+                stats = os.stat(file, dir_fd=rootdf, follow_symlinks=False)
+                if stat.S_IFMT(stats.st_mode) == stat.S_IFLNK:
+                    logger.error("Got symbolic link in source to %s. " +
+                                 "Removing...",
+                                 os.readlink(file, dir_fd=rootdf))
+                    os.unlink(file, dir_fd=rootdf)
+
+        logger.debug("Created links in workdir. Moving to destination")
+        os.rename(workdest, dest)
+        check_output_permissions(workdest)
+    except:  # even for SystemExit
+        logger.error("Got exception before we finished copying files. " +
+                     "Rolling back changes")
+        if os.path.exists(dest):
+            shutil.rmtree(dest)
+        raise
+    finally:
+        shutil.rmtree(tmpdir)
 
 
-def copy(file, dest, checksums=True, maxtries=2):
-    """ Copy dir or file ``file`` to dest.
+def to_openbis(file, openbis_dir, tmpdir=None):
+    """ Copy this file or directory to the openbis export directory
 
-    shutil has a couple of security issues in its copy functions:
-    http://bugs.python.org/issue15100
-    Using ``/usr/bin/rsync`` instead.
+    If the filename does not include an openbis barcode, raise ValueError.
+
+    file, openbis_dir and tmpdir must all be on the same file system.
     """
     file = os.path.abspath(file)
-    dest = os.path.abspath(dest)
-    logger.debug("copying file %s to %s", file, dest)
 
-    if os.path.exists(dest):
-        logger.critical("Destination file exists: %s", dest)
-        raise ValueError("Destination file exists: %s", dest)
+    if os.path.isdir(file):
+        logging.debug("Can not send directory %s to openbis", file)
+        raise ValueError("Sending directories to openbis is not supported")
 
-    # just for better error message. Real check in rsync
-    if os.path.islink(file):
-        logger.critical('Symbolic links in "incoming" are not allowed')
-        raise ValueError('Not allowed to copy links')
-    if not (os.path.isdir(file) or os.path.isfile(file)):
-        logger.critical('Can only copy files or directories')
-        raise ValueError("Invalid file to copy: %s", file)
+    try:
+        openbis_name = generate_openbis_name(file)
+    except ValueError:
+        logging.debug("Can not find a barcode in %s", file)
+        raise
 
-    check_input_permissions(file)
-    changed = True
-    for i in range(maxtries + 1):
-        if not changed:
-            break
-
-        changed = run_rsync(file, dest)
-
-        if i != 0 and changed:
-            logging.info("Bit errors while copying the following files: \n%s",
-                         changed)
-    else:
-        logging.error("Retried copying and checksums still differ " +
-                      "for files:\n%s", changed)
-        raise OSError("Bit errors while copying")
-    check_output_permissions(dest)
-
-
-def to_openbis(file, new_name, checksums=True):
-    """ Copy this file or directory to the openbis export directory """
-    logger.debug("Export %s to OpenBis", file)
-    file = os.path.abspath(file)
-    dest = os.path.join(os.path.split(file)[0],
-                        'to_openbis',
-                        new_name)
-    copy(file, dest, checksums=checksums)
+    logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
+    dest = os.path.join(openbis_dir, openbis_name)
+    recursive_link(file, dest, tmpdir)
 
     # tell openbis that we are finished copying
     base, name = os.path.split(dest)
-    with open(os.path.join(base, MARKER_NAME + name), 'w'):
+    with open(os.path.join(base, FINISHED_MARKER + name), 'w'):
         pass
 
 
-def to_storage(file, new_name, checksums=True):
-    pass
+def to_storage(file, storage_dir, tmpdir=None):
+    logger.debug("to_storage is not implemented, ignoring")
 
 
-def to_manual(file, checksums=True):
+def to_manual(file, manual_dir, tmpdir=None):
     """ Copy this file or directory to the directory for manual intervention"""
     file = os.path.abspath(file)
-    dest = os.path.join(os.path.split(file)[0],
-                        'manual_intervention',
-                        os.path.basename(file))
-    copy(file, dest, checksums=checksums)
-    checksum(dest)
+
+    cleaned_name = clean_filename(file)
+    dest = os.path.join(manual_dir, cleaned_name)
+    recursive_link(file, dest, tmpdir)
+    logger.info("manual intervention is required for %s", file)
+    write_checksum(dest)
 
 
-def handle_file(basedir, file):
-    basedir = os.path.abspath(basedir)
-    assert os.path.isdir(basedir)
+def make_links(file, openbis_dir, manual_dir, storage_dir, tmpdir=None):
+    file = os.path.abspath(file)
+
+    logger.debug("processing file " + str(file))
+
+    adjust_permissions(file)
 
     try:
-        manual_file = False
-        logger.debug("processing file " + str(file))
-        file = os.path.abspath(file)
+        to_openbis(file, openbis_dir, tmpdir)
+    except ValueError:
+        to_manual(file, manual_dir, tmpdir)
+    finally:
+        to_storage(file, storage_dir, tmpdir)
 
-        if os.path.isdir(file):
-            to_manual(file, checksums=True)
-            manual_file = True
-
-        else:
-            try:
-                new_name = generate_name(file)
-            except ValueError:
-                to_manual(file, checksums=True)
-                manual_file = True
-            else:
-                to_storage(file, new_name, checksums=True)
-                to_openbis(file, new_name, checksums=True)
-
-        if manual_file:
-            logger.info("manual intervention is required for %s", file)
-    except Exception:
-        logger.exception("An error occured while moving files: ")
-        with open(os.path.join(basedir, 'ERROR'), 'w'):
-            pass
-        raise
-    else:
-        logger.debug("Removing file " + str(file))
+    logger.debug("Removing original file %s", file)
+    try:
         if os.path.isfile(file):
             os.unlink(file)
         elif os.path.isdir(file):
             shutil.rmtree(str(file))
         else:
-            logger.error("Could not remove file " + file)
+            logger.error(
+                "Could not remove file, it is not a regular file: %s", file
+            )
+    except Exception:
+        logger.error("Could not remove file %s", file)
+        raise
 
 
-def listen(path, interval):
+def listen(interval, incoming, openbis, manual, storage, tmpdir=None):
     """ Listen for tasks in ``path``.
 
     Check for a marker file in ``path`` every ``interval`` seconds. If new
     files are found, check their permissions, write their checksums to
     ``checksums.txt`` and sort them into apropriate subdirs.
     """
-    init_signal_handler()
-    logger.info("Starting to listen in " + str(path))
-    os.chdir(str(path))
-    ignored_files = [os.path.join(path, file) for file in IGNORED_FILES]
+    logger.info("Starting to listen in %s", incoming)
+    os.chdir(str(incoming))
     while True:
-        for marker in glob.glob(MARKER_NAME + '*'):
-            try:
-                logging.debug("Found new marker file: %s", marker)
-                file = marker[len(MARKER_NAME):]
-                if not os.path.exists(file):
-                    logger.critical("Marker %s exists, but %s does not",
-                                    marker, file)
-                    raise ValueError("Marker %s without file" % marker)
-                if file in ignored_files:
-                    logging.debug("ignoring file: %s", file)
-                    continue
-                logger.info("New file arrived: %s", file)
-                handle_file(path, file)
-                logger.info("Finished processing file. Cleaning up")
-                try:
-                    os.remove(marker)
-                except OSError:
-                    logger.error("Could not remove marker file " + marker)
-            except Exception:
-                logger.critical(
-                    "An unexpected error occured during handeling of file %s",
-                    file
-                )
-                logger.exception("Error was:")
-                logger.critical("This daemon will now suspend itself and " +
-                                " wait for human intervention. To restart, " +
-                                "please execute `kill -CONT %s`. To exit, " +
-                                "execute `kill %s`", os.getpid(), os.getpid())
+        for marker in glob.glob(FINISHED_MARKER + '*'):
+            logging.debug("Found new marker file: %s", marker)
+            filename = marker[len(FINISHED_MARKER):]
+            file = os.path.abspath(filename)
 
-                # Should use signal.sigwaitinfo, but this is not available
-                # for py < 3.3
-                signal.pause()
+            if os.path.exists(ERROR_MARKER + filename):
+                logger.debug("Ignoring file %s because of error marker",
+                             file)
+                continue
+
+            try:
+                if not filename:
+                    raise ValueError("Got bare marker file: %s" % marker)
+
+                logger.info("New file arrived: %s", file)
+
+                if (filename.startswith(FINISHED_MARKER) or
+                        filename.startswith(ERROR_MARKER)):
+                    raise ValueError("Filename starts with marker name")
+
+                if not os.path.exists(file):
+                    raise ValueError("Marker %s, but %s does not exist" %
+                                     (marker, file))
+
+                make_links(
+                    file,
+                    openbis_dir=openbis,
+                    manual_dir=manual,
+                    storage_dir=storage,
+                    tmpdir=tmpdir,
+                )
+
+                logger.debug("Finished processing file. Removing marker")
+                os.unlink(marker)
+
+                logger.info("Finished processing file %s", filename)
+            except Exception:
+                error_marker = os.path.join(
+                    incoming,
+                    ERROR_MARKER + filename
+                )
+                logger.exception("An error occured while moving files. " +
+                                 "Creating error marker file %s, remove if " +
+                                 "you fixed the error. Error was:",
+                                 error_marker)
+                with open(error_marker, 'w') as f:
+                    traceback.print_exc(file=f)
         time.sleep(interval)
 
 
 def parse_args():
+    """ Read arguments from config file and command line args."""
+    defaults = {
+        'permissions': True,
+        'checksum': True,
+        'interval': 60,
+        'pidfile': '~/.dropboxhandler.pid',
+        'daemon': False,
+    }
+
     parser = argparse.ArgumentParser(
         description="Watch for new files in " +
-                    "dropboxdir and move to ObenBis/storage"
+                    "dropboxdir and move to ObenBis/storage",
     )
-    parser.add_argument(
-        'dropboxdir',
-        help='the dropbox directory in which new files appear'
-    )
-    parser.add_argument(
-        '-t', help="interval [s] between checks for " +
-                   "new files (may be removed in the future)",
-        default=600, type=int)
-    parser.add_argument(
-        '--no-permissions',
-        help="do not set and check permissions of input and output files",
-        dest='permissions', action='store_false', default=True
-    )
+
+    parser.add_argument("-c", "--conf_file",
+                        help="Specify config file", metavar="FILE",
+                        default="~/.dropboxhandler.conf")
+    parser.add_argument("--print-example-config",
+                        help="Print a example config file to stdout.",
+                        action="store_true", default=False)
+    parser.add_argument('-t', help="interval [s] between checks for " +
+                        "new files", type=int, dest='interval')
+    parser.add_argument('--no-permissions', dest='permissions',
+                        help="do not set and check permissions of input " +
+                        "and output files", action='store_false')
     parser.add_argument('--logfile', default=None)
     parser.add_argument('--loglevel', default='INFO')
-    parser.add_argument('-d', '--daemon', default=False, action='store_true')
-    parser.add_argument('--pid-file', default='~/.handle_incoming.pid')
-    return parser.parse_args()
+    parser.add_argument('-d', '--daemon', action='store_true')
+    parser.add_argument('--pidfile', default=None)
+    parser.add_argument('--no-checksum', dest='checksum',
+                        help="Do not compute checksums for incoming files",
+                        action="store_false")
+    args = parser.parse_args()
+
+    if args.print_example_config:
+        print_example_config()
+        sys.exit(0)
+
+    # read config file
+    if not os.path.exists(args.conf_file):
+        print("Could not find config file (default location: " +
+              "~/.dropboxhandler.conf", file=sys.stderr)
+        sys.exit(1)
+    interpolator = configparser.ExtendedInterpolation()
+    config = configparser.ConfigParser(interpolation=interpolator)
+    config.read([args.conf_file])
+
+    if not "paths" in config:
+        print("Config file must include section 'paths'", file=sys.stderr)
+        sys.exit(1)
+
+    return merge_configuration(args, config, defaults)
+
+
+def merge_configuration(args, config, defaults):
+    cleaned_args = {key: val for key, val in args.items() if val is not None}
+
+    cleaned_config = {}
+    cleaned_config['paths'] = {}
+    for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
+        if not name in config["paths"]:
+            print("Section 'paths' must include '%s'" % name, file=sys.stderr)
+        cleaned_args['paths'][name] = config.get('paths', name)
+
+    args = vars(args)
+    for name in ['permissions', 'checksum', 'daemon']:
+        if name in config:
+            cleaned_config[name] = config.getboolean('options', name)
+
+    for name in ['interval']:
+        if name in config:
+            cleaned_config[name] = config.getint('options', name)
+
+    defaults.update(cleaned_config)
+    defaults.update(args)
+    return defaults
+
+
+def check_configuration(options):
+    """ Sanity checks for directories. """
+    for name in options['paths']:
+        path = options['paths'][name]
+        if not os.path.isdir(path):
+            print(name + " is not a directory: ", path, file=sys.stderr)
+            sys.exit(1)
+        try:
+            check_output_permissions(path)
+        except ValueError:
+            print(str(path) + " has invalid permissions", file=sys.stderr)
+            sys.exit(1)
+
+    if options['interval'] <= 0:
+        print("Invalid interval:", options['interval'], file=sys.stderr)
+        sys.exit(1)
+
+
+def print_example_config():
+    config_path = os.path.join(os.path.dirname(__file__), 'example.conf')
+    with open(config_path) as f:
+        print(f.read())
 
 
 def daemonize(func, pidfile, *args, **kwargs):
@@ -510,7 +623,20 @@ def daemonize(func, pidfile, *args, **kwargs):
     if pid:
         os._exit(0)
 
-    logger.info("PID of new daemon: " + str(os.getpid()))
+    logger.info("PID of new daemon: %s", os.getpid())
+
+    write_pidfile(pidfile)
+    close_open_dfs()
+    init_signal_handler()
+
+    try:
+        func(*args, **kwargs)
+    except Exception:
+        logger.critical("Unexpected error. Daemon is stopping")
+        logger.exception("Error was:")
+
+
+def write_pidfile(pidfile):
     pidfile = os.path.expanduser(str(pidfile))
 
     # open(file, 'x') not available in python 2.6
@@ -530,67 +656,53 @@ def daemonize(func, pidfile, *args, **kwargs):
 
     atexit.register(lambda: os.remove(pidfile))
 
-    func(*args, **kwargs)
+
+def close_open_dfs():
+    for fd in range(3, resource.getrlimit(resource.RLIMIT_NOFILE)[0]):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    # use devnull for std file descriptors
+    devnull = os.open('/dev/null', os.O_RDWR)
+    for i in range(3):
+        os.dup2(devnull, 0)
 
 
-def set_write_permissions():
-    # set group and permissions for new files
-    userid, groupid = get_output_user_group()
-    try:
-        os.setgid(groupid)
-        os.umask(0o007)
-    except Exception:
-        print("Could not change to group " + str(groupid))
-        sys.exit(1)
-
-
-def check_dropboxdir(path):
-    """ sanity checks for dropboxdir. """
-    if not os.path.isdir(path):
-        print(str(path) + " is not a directory", file=sys.stderr)
-        sys.exit(1)
-    try:
-        check_output_permissions(path)
-    except ValueError:
-        print("dropboxdir has invalid permissions", file=sys.stderr)
-        sys.exit(1)
-
-    if not os.path.isdir(os.path.join(path, 'to_openbis')):
-        print("dropboxdir must contain dir 'to_openbis'", file=sys.stderr)
-        sys.exit(1)
-    if not os.path.isdir(os.path.join(path, 'manual_intervention')):
-        print("dropboxdir must contain dir 'manual_intervention'",
-              file=sys.stderr)
-        sys.exit(1)
-
-
-def main():
-    args = parse_args()
-    path = os.path.abspath(args.dropboxdir)
-    if not os.path.exists(path):
-        print("Could not find dropboxdir", file=sys.stderr)
-        sys.exit(1)
-
-    if args.permissions:
-        set_write_permissions()
+def configure_permissions(args):
+    if args['permissions']:
+        userid, groupid = get_output_user_group()
+        try:
+            os.setgid(groupid)
+            os.umask(0o007)
+        except Exception:
+            print("Could not change to group " + str(groupid))
+            sys.exit(1)
     else:
-        # overwrite permission checking by stubs
+        # overwrite permission checking with stubs
         global check_input_permissions, check_output_permissions
         global get_output_user_group
         check_output_permissions = lambda x: None
         check_input_permissions = lambda x: None
         get_output_user_group = lambda: (1000, 1000)
 
-    check_dropboxdir(path)
 
-    init_logging(args.logfile, args.loglevel, "handle_incoming %s" % path)
+def main():
+    args = parse_args()
+    configure_permissions(args)
+    init_logging(args)
+    check_configuration(args)
 
     try:
         # start checking for new files
-        if args.daemon:
-            daemonize(listen, args.pid_file, path, args.t)
+        if args['daemon']:
+            daemonize(listen, args['pidfile'], args['interval'],
+                      **args['paths'])
         else:
-            listen(path, args.t)
+            init_signal_handler()
+            listen(args['interval'], **args['paths'])
+
     except Exception:
         logging.critical("Daemon is shutting down for unknown reasons")
         logging.exception('Error was:')
