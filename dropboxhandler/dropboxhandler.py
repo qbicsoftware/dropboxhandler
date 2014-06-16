@@ -508,7 +508,7 @@ def parse_args():
                     "dropboxdir and move to ObenBis/storage",
     )
 
-    parser.add_argument("-c", "--conf_file",
+    parser.add_argument("-c", "--conf-file",
                         help="Specify config file", metavar="FILE",
                         default="~/.dropboxhandler.conf")
     parser.add_argument("--print-example-config",
@@ -559,16 +559,16 @@ def merge_configuration(args, config, defaults):
     for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
         if not name in config["paths"]:
             print("Section 'paths' must include '%s'" % name, file=sys.stderr)
-        cleaned_args['paths'][name] = config.get('paths', name)
+        cleaned_config['paths'][name] = config['paths'][name]
 
-    args = vars(args)
-    for name in ['permissions', 'checksum', 'daemon']:
-        if name in config:
-            cleaned_config[name] = config.getboolean('options', name)
+    if 'options' in config:
+        for name in ['permissions', 'checksum', 'daemon']:
+            if name in config:
+                cleaned_config[name] = config.getboolean('options', name)
 
-    for name in ['interval']:
-        if name in config:
-            cleaned_config[name] = config.getint('options', name)
+        for name in ['interval']:
+            if name in config:
+                cleaned_config[name] = config.getint('options', name)
 
     defaults.update(cleaned_config)
     defaults.update(args)
