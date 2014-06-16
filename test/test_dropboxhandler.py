@@ -9,6 +9,8 @@ import tempfile
 import subprocess
 import os
 import shutil
+import signal
+import time
 from collections import namedtuple
 try:
     from unittest import mock
@@ -106,5 +108,64 @@ def test_recursive_link(mock_logger):
     recursive_link(source, dest)
     assert os.path.exists(os.path.join(dest, 'data.txt'))
     assert not os.path.exists(os.path.join(dest, 'link'))
-    assert "Removing..." in mock_logger.error.call_args[0][0]
+
+    # py3 only
+    if not isinstance(mock_logger, str):
+        assert "Removing..." in mock_logger.error.call_args[0][0]
+    shutil.rmtree(base)
+
+
+def test_integration():
+    base = tempfile.mkdtemp()
+    names = ['incoming', 'tmpdir', 'storage', 'manual', 'openbis']
+    paths = {}
+    for name in names:
+        paths[name] = os.path.join(base, name)
+        os.mkdir(paths[name])
+
+    conf = os.path.join(base, 'dropbox.conf')
+    with open(conf, 'w') as f:
+        f.write("[paths]\n")
+        for name in names:
+            f.write("{} = {}\n".format(name, paths[name]))
+
+        f.write('[options]\n')
+        f.write('interval = 1\n')
+
+    subprocess.check_call(
+        'dropboxhandler -c {} -d --no-permissions'.format(conf), shell=True
+    )
+
+    time.sleep(0.2)
+    pidfile = os.path.expanduser('~/.dropboxhandler.pid')
+    with open(pidfile) as f:
+        pid = int(f.read())
+
+    os.kill(pid, signal.SIGTERM)
+    time.sleep(0.2)
+    assert not os.path.exists(pidfile)
+
+    subprocess.check_call(
+        'dropboxhandler -c {} -d --no-permissions'.format(conf), shell=True
+    )
+    time.sleep(0.2)
+
+    data = 'data.txt'
+    fdata = os.path.join(paths['incoming'], data)
+    with open(fdata, 'w') as f:
+        f.write('hi')
+
+    marker = os.path.join(paths['incoming'], ".MARKER_is_finished_" + data)
+    with open(marker, 'w'):
+        pass
+
+    time.sleep(2)
+    assert os.path.exists(os.path.join(paths['manual'], data))
+
+    with open(pidfile) as f:
+        pid = int(f.read())
+    os.kill(pid, signal.SIGTERM)
+
+    time.sleep(0.2)
+
     shutil.rmtree(base)

@@ -337,15 +337,16 @@ def recursive_link(source, dest, tmpdir=None):
         subprocess.check_call(command, shell=False)
 
         # remove symlinks from output
-        for root, dirs, files, rootdf in os.fwalk(workdest):
+        # os.fwalk would be better, but not for py<3.3
+        for root, dirs, files in os.walk(workdest):
             for file in dirs + files:
-
-                stats = os.stat(file, dir_fd=rootdf, follow_symlinks=False)
+                path = os.path.join(root, file)
+                stats = os.lstat(path)
                 if stat.S_IFMT(stats.st_mode) == stat.S_IFLNK:
                     logger.error("Got symbolic link in source to %s. " +
                                  "Removing...",
-                                 os.readlink(file, dir_fd=rootdf))
-                    os.unlink(file, dir_fd=rootdf)
+                                 os.readlink(path))
+                    os.unlink(path)
 
         logger.debug("Created links in workdir. Moving to destination")
         os.rename(workdest, dest)
@@ -559,19 +560,24 @@ def merge_configuration(args, config, defaults):
     for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
         if not name in config["paths"]:
             print("Section 'paths' must include '%s'" % name, file=sys.stderr)
-        cleaned_config['paths'][name] = config['paths'][name]
+            sys.exit(1)
+        cleaned_config['paths'][name] = os.path.expanduser(
+            config['paths'][name])
+    if 'pidfile' in config['paths']:
+        cleaned_config['pidfile'] = config['paths']['pidfile']
 
     if 'options' in config:
         for name in ['permissions', 'checksum', 'daemon']:
-            if name in config:
+            if name in config['options']:
                 cleaned_config[name] = config.getboolean('options', name)
 
         for name in ['interval']:
-            if name in config:
+            if name in config['options']:
                 cleaned_config[name] = config.getint('options', name)
 
     defaults.update(cleaned_config)
-    defaults.update(args)
+    defaults.update(cleaned_args)
+    defaults['pidfile'] = os.path.expanduser(defaults['pidfile'])
     return defaults
 
 
@@ -591,6 +597,13 @@ def check_configuration(options):
     if options['interval'] <= 0:
         print("Invalid interval:", options['interval'], file=sys.stderr)
         sys.exit(1)
+
+    if options['daemon'] and os.path.exists(options['pidfile']):
+        print("Pidfile {} exists. Is another daemon unning?".format(
+            options['pidfile']), file=sys.stderr)
+        sys.exit(1)
+
+    print(options['interval'])
 
 
 def print_example_config():
