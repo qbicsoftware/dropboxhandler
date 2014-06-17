@@ -21,7 +21,6 @@ import glob
 import traceback
 import stat
 import tempfile
-import resource
 try:
     import configparser
 except ImportError:
@@ -70,7 +69,7 @@ def init_logging(options):
             stream=sys.stdout,
         )
 
-    if 'conf_file' in options and options['conf_file']:
+    if options['use_conf_file_logging']:
         try:
             logging.config.fileConfig(options['conf_file'],
                                       disable_existing_loggers=True)
@@ -313,6 +312,8 @@ def init_signal_handler():
 def recursive_link(source, dest, tmpdir=None):
     source = os.path.abspath(source)
     dest = os.path.abspath(dest)
+    if os.path.exists(dest):
+        raise ValueError("File exists: %s" % dest)
     destbase, destname = os.path.split(dest)
     if destname.startswith(FINISHED_MARKER):
         logger.error("Can not copy to destination that looks like a marker")
@@ -406,6 +407,7 @@ def to_manual(file, manual_dir, tmpdir=None):
 
 
 def make_links(file, openbis_dir, manual_dir, storage_dir, tmpdir=None):
+    """ Figure out to which dirs file should be linked. """
     file = os.path.abspath(file)
 
     logger.debug("processing file " + str(file))
@@ -538,11 +540,12 @@ def parse_args():
         print("Could not find config file (default location: " +
               "~/.dropboxhandler.conf", file=sys.stderr)
         sys.exit(1)
-    interpolator = configparser.ExtendedInterpolation()
-    config = configparser.ConfigParser(interpolation=interpolator)
+    #interpolator = configparser.ExtendedInterpolation()
+    #config = configparser.ConfigParser(interpolation=interpolator)
+    config = configparser.ConfigParser()
     config.read([args.conf_file])
 
-    if not "paths" in config:
+    if not config.has_section('paths'):
         print("Config file must include section 'paths'", file=sys.stderr)
         sys.exit(1)
 
@@ -558,22 +561,25 @@ def merge_configuration(args, config, defaults):
     cleaned_config = {}
     cleaned_config['paths'] = {}
     for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
-        if not name in config["paths"]:
+        if not config.has_option("paths", name):
             print("Section 'paths' must include '%s'" % name, file=sys.stderr)
             sys.exit(1)
         cleaned_config['paths'][name] = os.path.expanduser(
-            config['paths'][name])
-    if 'pidfile' in config['paths']:
-        cleaned_config['pidfile'] = config['paths']['pidfile']
+            config.get('paths', name)
+        )
+    if config.has_option('paths', 'pidfile'):
+        cleaned_config['pidfile'] = config.get('paths', 'pidfile')
 
-    if 'options' in config:
+    if config.has_section('options'):
         for name in ['permissions', 'checksum', 'daemon']:
-            if name in config['options']:
+            if config.has_option('options', name):
                 cleaned_config[name] = config.getboolean('options', name)
 
         for name in ['interval']:
-            if name in config['options']:
+            if config.has_option('options', name):
                 cleaned_config[name] = config.getint('options', name)
+
+    cleaned_config['use_conf_file_logging'] = config.has_section('logging')
 
     defaults.update(cleaned_config)
     defaults.update(cleaned_args)
@@ -602,8 +608,6 @@ def check_configuration(options):
         print("Pidfile {} exists. Is another daemon unning?".format(
             options['pidfile']), file=sys.stderr)
         sys.exit(1)
-
-    print(options['interval'])
 
 
 def print_example_config():
@@ -642,7 +646,7 @@ def daemonize(func, pidfile, *args, **kwargs):
     logger.info("PID of new daemon: %s", os.getpid())
 
     write_pidfile(pidfile)
-    close_open_dfs()
+    close_open_fds()
     init_signal_handler()
 
     try:
@@ -673,13 +677,7 @@ def write_pidfile(pidfile):
     atexit.register(lambda: os.remove(pidfile))
 
 
-def close_open_dfs():
-    for fd in range(3, resource.getrlimit(resource.RLIMIT_NOFILE)[0]):
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-
+def close_open_fds():
     # use devnull for std file descriptors
     devnull = os.open('/dev/null', os.O_RDWR)
     for i in range(3):
