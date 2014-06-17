@@ -605,8 +605,8 @@ def check_configuration(options):
         sys.exit(1)
 
     if options['daemon'] and os.path.exists(options['pidfile']):
-        print("Pidfile {} exists. Is another daemon unning?".format(
-            options['pidfile']), file=sys.stderr)
+        print("Pidfile %s exists. Is another daemon unning?" %
+              options['pidfile'], file=sys.stderr)
         sys.exit(1)
 
 

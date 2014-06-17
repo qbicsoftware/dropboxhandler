@@ -135,17 +135,16 @@ class TestIntegration:
         with open(self.conf, 'w') as f:
             f.write("[paths]\n")
             for name in self.names:
-                f.write("{} = {}\n".format(name, self.paths[name]))
-            f.write('pidfile = {}\n'.format(self.pidfile))
+                f.write("%s = %s\n" % (name, self.paths[name]))
+            f.write('pidfile = %s\n' % self.pidfile)
 
             f.write('[options]\n')
             f.write('interval = 1\n')
 
         self.logfile = pjoin(self.base, 'log')
         subprocess.check_call(
-            'dropboxhandler -c {} -d --no-permissions --logfile {}'
-            .format(self.conf, self.logfile),
-            shell=True
+            'dropboxhandler -c %s -d --no-permissions --logfile %s' %
+            (self.conf, self.logfile), shell=True
         )
         time.sleep(0.2)
 
