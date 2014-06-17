@@ -1,11 +1,15 @@
 from setuptools import setup
+import sys
+
+install_requires = []
+if not sys.version_info >= (2, 7):
+    install_requires.append("argparse")
 
 setup(
     name='dropboxhandler',
     version='1.0',
     author='Adrian Seyboldt',
-    author_email='adrian.seyboldt@wbe.de',
-    #scripts=['dropboxhandler.py'],
+    author_email='adrian.seyboldt@web.de',
     py_modules=['dropboxhandler'],
     entry_points={
         'console_scripts':
@@ -13,4 +17,5 @@ setup(
     },
     data_files=[('', ['example.conf'])],
     description='Rename and sort incoming files from dropbox',
+    install_requires=install_requires,
 )
