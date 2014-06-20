@@ -20,7 +20,8 @@ try:
 except ImportError:
     mock = namedtuple('mock', ['patch'])(lambda s: lambda f: lambda: f(s))
 
-init_logging({'loglevel': 'DEBUG', 'use_conf_file_logging': False})
+init_logging({'loglevel': 'DEBUG', 'use_conf_file_logging': False,
+              'paths': {'incoming': '/path/to/incoming'}})
 
 
 @raises(ValueError)
@@ -140,11 +141,12 @@ class TestIntegration:
 
             f.write('[options]\n')
             f.write('interval = 1\n')
+            f.write('filemode = 0o644')
 
         self.logfile = pjoin(self.base, 'log')
         subprocess.check_call(
-            'dropboxhandler -c %s -d --no-permissions --logfile %s' %
-            (self.conf, self.logfile), shell=True
+            'dropboxhandler -c %s -d' % (self.conf),
+            shell=True
         )
         time.sleep(0.2)
 

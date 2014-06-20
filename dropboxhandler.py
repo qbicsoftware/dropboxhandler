@@ -74,9 +74,11 @@ def init_logging(options):
             logging.config.fileConfig(options['conf_file'],
                                       disable_existing_loggers=True)
         except Exception as e:
-            print("Could not load logging information from config file", e)
+            print("Could not load logging information from config file", e,
+                  file=sys.stderr)
 
-    logger = logging.getLogger()
+    name = options['paths']['incoming']
+    logger = logging.getLogger('dropboxhandler_' + name)
 
 
 def write_checksum(file):
@@ -192,19 +194,6 @@ def generate_openbis_name(path):
     return barcode + '_' + cleaned_name
 
 
-def get_output_user_group():
-    """ Return userid and groupid that all new files should belong to."""
-    user = pwd.getpwuid(os.getuid()).pw_name
-    group = user + 'grp'
-
-    userid = os.getuid()
-    try:
-        groupid = grp.getgrnam(group).gr_gid
-    except KeyError:
-        raise ValueError("group %s does not exist" % group)
-    return userid, groupid
-
-
 def _check_perms(path, userid, groupid, dirmode, filemode):
     if userid and os.stat(path).st_uid != userid:
         logger.critical("userid of file %s should be %s but is %s",
@@ -227,68 +216,19 @@ def _check_perms(path, userid, groupid, dirmode, filemode):
         logger.critical("should be a regular file or dir: %s", path)
 
 
-def _check_perms_recursive(path, userid, groupid, dirmode, filemode):
-    _check_perms(path, userid, groupid, dirmode, filemode)
-    for path, dirnames, filenames in os.walk(path):
-        _check_perms(path, userid, groupid, dirmode, filemode)
-        for name in filenames:
-            _check_perms(os.path.join(path, name),
-                         userid, groupid, dirmode, filemode)
-
-
-def check_input_permissions(path):
-    """ Basic sanity check for permissions of incoming files
-
-    This exists to find configuration issues only.
-
-    Will not raise errors, but write them to logger.
-    """
-    try:
-        userid, groupid = get_output_user_group()
-    except ValueError:
-        logger.critical("Output group does not exist. Files may be " +
-                        "accessible for unauthorized users")
-        return
-
-    _check_perms_recursive(path, userid, None, 0o700, 0o600)
-
-
-def check_output_permissions(path):
+def check_permissions(path, userid, groupid, dirmode, filemode):
     """ Basic sanity check for permissions of file written by this daemon
 
     This exists to find configuration issues only.
 
     Will not raise errors, but write them to logger.
     """
-    try:
-        userid, groupid = get_output_user_group()
-    except ValueError:
-        logger.critical("Output group does not exist. Files may be " +
-                        "accessible for unauthorized users")
-        return
-
-    _check_perms_recursive(path, userid, groupid, 0o770, 0o660)
-
-
-def adjust_permissions(path):
-    try:
-        userid, groupid = get_output_user_group()
-    except ValueError:
-        logger.critical("Output group does not exist. Files may be " +
-                        "accessible for unauthorized users")
-        return
-
-    def adjust(file):
-        os.chown(file, userid, groupid)
-        if os.path.isdir(file):
-            os.chmod(file, 0o770)
-        else:
-            os.chmod(file, 0o660)
-
-    adjust(path)
-    for root, dirs, files in os.walk(path):
-        for file in dirs + files:
-            adjust(file)
+    _check_perms(path, userid, groupid, dirmode, filemode)
+    for path, dirnames, filenames in os.walk(path):
+        _check_perms(path, userid, groupid, dirmode, filemode)
+        for name in filenames:
+            _check_perms(os.path.join(path, name),
+                         userid, groupid, dirmode, filemode)
 
 
 def init_signal_handler():
@@ -309,7 +249,7 @@ def init_signal_handler():
     signal.signal(signal.SIGINT, handler)
 
 
-def recursive_link(source, dest, tmpdir=None):
+def recursive_link(source, dest, tmpdir=None, perms=None):
     source = os.path.abspath(source)
     dest = os.path.abspath(dest)
     if os.path.exists(dest):
@@ -350,8 +290,9 @@ def recursive_link(source, dest, tmpdir=None):
                     os.unlink(path)
 
         logger.debug("Created links in workdir. Moving to destination")
+        if perms is not None:
+            check_permissions(workdest, **perms)
         os.rename(workdest, dest)
-        check_output_permissions(workdest)
     except:  # even for SystemExit
         logger.error("Got exception before we finished copying files. " +
                      "Rolling back changes")
@@ -362,7 +303,7 @@ def recursive_link(source, dest, tmpdir=None):
         shutil.rmtree(tmpdir)
 
 
-def to_openbis(file, openbis_dir, tmpdir=None):
+def to_openbis(file, openbis_dir, tmpdir=None, perms=None):
     """ Copy this file or directory to the openbis export directory
 
     If the filename does not include an openbis barcode, raise ValueError.
@@ -383,7 +324,7 @@ def to_openbis(file, openbis_dir, tmpdir=None):
 
     logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
     dest = os.path.join(openbis_dir, openbis_name)
-    recursive_link(file, dest, tmpdir)
+    recursive_link(file, dest, tmpdir=tmpdir, perms=None)
 
     # tell openbis that we are finished copying
     base, name = os.path.split(dest)
@@ -391,35 +332,37 @@ def to_openbis(file, openbis_dir, tmpdir=None):
         pass
 
 
-def to_storage(file, storage_dir, tmpdir=None):
+def to_storage(file, storage_dir, tmpdir=None, perms=None):
     logger.debug("to_storage is not implemented, ignoring")
 
 
-def to_manual(file, manual_dir, tmpdir=None):
+def to_manual(file, manual_dir, tmpdir=None, perms=None):
     """ Copy this file or directory to the directory for manual intervention"""
     file = os.path.abspath(file)
 
     cleaned_name = clean_filename(file)
     dest = os.path.join(manual_dir, cleaned_name)
-    recursive_link(file, dest, tmpdir)
+    recursive_link(file, dest, tmpdir=tmpdir, perms=None)
     logger.info("manual intervention is required for %s", file)
     write_checksum(dest)
 
 
-def make_links(file, openbis_dir, manual_dir, storage_dir, tmpdir=None):
+def make_links(file, openbis_dir, manual_dir, storage_dir,
+               tmpdir=None, perms=None):
     """ Figure out to which dirs file should be linked. """
     file = os.path.abspath(file)
 
     logger.debug("processing file " + str(file))
 
-    adjust_permissions(file)
+    if perms is not None:
+        check_permissions(file, **perms)
 
     try:
-        to_openbis(file, openbis_dir, tmpdir)
+        to_openbis(file, openbis_dir, tmpdir=tmpdir, perms=perms)
     except ValueError:
-        to_manual(file, manual_dir, tmpdir)
+        to_manual(file, manual_dir, tmpdir=tmpdir, perms=perms)
     finally:
-        to_storage(file, storage_dir, tmpdir)
+        to_storage(file, storage_dir, tmpdir=tmpdir, perms=perms)
 
     logger.debug("Removing original file %s", file)
     try:
@@ -436,7 +379,8 @@ def make_links(file, openbis_dir, manual_dir, storage_dir, tmpdir=None):
         raise
 
 
-def listen(interval, incoming, openbis, manual, storage, tmpdir=None):
+def listen(interval, incoming, openbis, manual, storage,
+           tmpdir=None, perms=None):
     """ Listen for tasks in ``path``.
 
     Check for a marker file in ``path`` every ``interval`` seconds. If new
@@ -476,6 +420,7 @@ def listen(interval, incoming, openbis, manual, storage, tmpdir=None):
                     manual_dir=manual,
                     storage_dir=storage,
                     tmpdir=tmpdir,
+                    perms=perms,
                 )
 
                 logger.debug("Finished processing file. Removing marker")
@@ -496,6 +441,11 @@ def listen(interval, incoming, openbis, manual, storage, tmpdir=None):
         time.sleep(interval)
 
 
+def error_exit(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
 def parse_args():
     """ Read arguments from config file and command line args."""
     defaults = {
@@ -504,6 +454,10 @@ def parse_args():
         'interval': 60,
         'pidfile': '~/.dropboxhandler.pid',
         'daemon': False,
+        'user': None,
+        'group': None,
+        'filemode': 0o660,
+        'dirmode': 0o770,
     }
 
     parser = argparse.ArgumentParser(
@@ -529,6 +483,16 @@ def parse_args():
     parser.add_argument('--no-checksum', dest='checksum',
                         help="Do not compute checksums for incoming files",
                         action="store_false")
+    parser.add_argument('--user', default=None,
+                        help="Owner of incoming and outgoing files")
+    parser.add_argument('--group', default=None,
+                        help="Group owner of incoming and outgoing files ")
+    parser.add_argument('--filemode', default=None,
+                        help="permissions of all incoming and outgoing file " +
+                        "(e.g. '0o660')")
+    parser.add_argument('--dirmode', default=None,
+                        help="permissons of all incoming and outgoing dirs")
+
     args = parser.parse_args()
 
     if args.print_example_config:
@@ -546,8 +510,7 @@ def parse_args():
     config.read([args.conf_file])
 
     if not config.has_section('paths'):
-        print("Config file must include section 'paths'", file=sys.stderr)
-        sys.exit(1)
+        error_exit("Config file must include section 'paths'")
 
     return merge_configuration(vars(args), config, defaults)
 
@@ -562,8 +525,7 @@ def merge_configuration(args, config, defaults):
     cleaned_config['paths'] = {}
     for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
         if not config.has_option("paths", name):
-            print("Section 'paths' must include '%s'" % name, file=sys.stderr)
-            sys.exit(1)
+            error_exit("Section 'paths' must include '%s'" % name)
         cleaned_config['paths'][name] = os.path.expanduser(
             config.get('paths', name)
         )
@@ -579,6 +541,14 @@ def merge_configuration(args, config, defaults):
             if config.has_option('options', name):
                 cleaned_config[name] = config.getint('options', name)
 
+        for name in ['filemode', 'dirmode']:
+            if config.has_option('options', name):
+                cleaned_config[name] = int(config.get('options', name), base=8)
+
+        for name in ['user', 'group']:
+            if config.has_option('options', name):
+                cleaned_config[name] = config.get('options', name)
+
     cleaned_config['use_conf_file_logging'] = config.has_section('logging')
 
     defaults.update(cleaned_config)
@@ -592,22 +562,38 @@ def check_configuration(options):
     for name in options['paths']:
         path = options['paths'][name]
         if not os.path.isdir(path):
-            print(name + " is not a directory: ", path, file=sys.stderr)
-            sys.exit(1)
-        try:
-            check_output_permissions(path)
-        except ValueError:
-            print(str(path) + " has invalid permissions", file=sys.stderr)
-            sys.exit(1)
+            error_exit(name + " is not a directory: ", path)
 
     if options['interval'] <= 0:
-        print("Invalid interval:", options['interval'], file=sys.stderr)
-        sys.exit(1)
+        error_exit("Invalid interval: " + options['interval'])
 
     if options['daemon'] and os.path.exists(options['pidfile']):
-        print("Pidfile %s exists. Is another daemon unning?" %
-              options['pidfile'], file=sys.stderr)
-        sys.exit(1)
+        error_exit("Pidfile %s exists. Is another daemon unning?" %
+                   options['pidfile'])
+
+    if options['permissions']:
+        perms = {}
+        if options['user'] is None:
+            perms['userid'] = os.geteuid()
+        else:
+            try:
+                perms['userid'] = pwd.getpwnam(options['group']).pw_uid
+            except KeyError:
+                error_exit("User '%s' does not exist." % options['user'])
+
+        if options['group'] is None:
+            perms['groupid'] = os.getegid()
+        else:
+            try:
+                perms['groupid'] = grp.getgrnam(options['group']).gr_gid
+            except KeyError:
+                error_exit("Group '%s' does not exist." % options['group'])
+
+        perms['filemode'] = options['filemode']
+        perms['dirmode'] = options['dirmode']
+        options['perms'] = perms
+    else:
+        options['perms'] = None
 
 
 def print_example_config():
@@ -660,18 +646,19 @@ def write_pidfile(pidfile):
     pidfile = os.path.expanduser(str(pidfile))
 
     # open(file, 'x') not available in python 2.6
-    if os.path.exists(pidfile):
-        print("Pidfile %s exists. Is another daemon running?" % pidfile,
-              file=sys.stderr)
-        sys.exit(1)
+    if sys.version_info >= (3, 3):
+        mode = 'x'
+    else:
+        mode = 'w'
+        if os.path.exists(pidfile):
+            error_exit("Pidfile %s exists. Is the daemon running?" % pidfile)
 
     try:
-        with open(pidfile, 'w') as f:
+        with open(pidfile, mode) as f:
             f.write(str(os.getpid()) + '\n')
     except OSError:
-        print("Could not write pidfile %s. Is another " +
-              "daemon running?" % pidfile,
-              file=sys.stderr)
+        error_exit("Could not write pidfile %s. Is the daemon running?" %
+                   pidfile)
         sys.exit(1)
 
     atexit.register(lambda: os.remove(pidfile))
@@ -684,38 +671,21 @@ def close_open_fds():
         os.dup2(devnull, 0)
 
 
-def configure_permissions(args):
-    global check_input_permissions, check_output_permissions
-    global get_output_user_group
-    if args['permissions']:
-        userid, groupid = get_output_user_group()
-        try:
-            os.setgid(groupid)
-            os.umask(0o007)
-        except Exception:
-            print("Could not change to group " + str(groupid))
-            sys.exit(1)
-    else:
-        # overwrite permission checking with stubs
-        check_output_permissions = lambda x: None
-        check_input_permissions = lambda x: None
-        get_output_user_group = lambda: (1000, 1000)
-
-
 def main():
     args = parse_args()
-    configure_permissions(args)
-    init_logging(args)
     check_configuration(args)
+    init_logging(args)
+
+    perms = args['perms']
 
     try:
         # start checking for new files
         if args['daemon']:
-            daemonize(listen, args['pidfile'], args['interval'],
+            daemonize(listen, args['pidfile'], args['interval'], perms=perms,
                       **args['paths'])
         else:
             init_signal_handler()
-            listen(args['interval'], **args['paths'])
+            listen(args['interval'], perms=perms, **args['paths'])
 
     except Exception:
         logging.critical("Daemon is shutting down for unknown reasons")
