@@ -196,24 +196,24 @@ def generate_openbis_name(path):
 
 def _check_perms(path, userid, groupid, dirmode, filemode):
     if userid and os.stat(path).st_uid != userid:
-        logger.critical("userid of file %s should be %s but is %s",
-                        path, userid, os.stat(path).st_uid)
+        raise ValueError("userid of file %s should be %s but is %s" %
+                         (path, userid, os.stat(path).st_uid))
     if groupid and os.stat(path).st_gid != groupid:
-        logger.critical("groupid of file %s should be %s but is %s",
-                        path, groupid, os.stat(path).st_gid)
+        raise ValueError("groupid of file %s should be %s but is %s" %
+                         (path, groupid, os.stat(path).st_gid))
 
     if os.path.isdir(path):
         if os.stat(path).st_mode % 0o1000 != dirmode:
-            logger.critical("mode of dir %s should be %o but is %o",
-                            path, dirmode, os.stat(path).st_mode % 0o1000)
+            raise ValueError("mode of dir %s should be %o but is %o" %
+                             (path, dirmode, os.stat(path).st_mode % 0o1000))
     elif os.path.islink(path):
-        logging.critical("symbolic links are not allowed: %s", path)
+        raise ValueError("symbolic links are not allowed: %s" % path)
     elif os.path.isfile(path):
         if os.stat(path).st_mode % 0o1000 != filemode:
-            logger.critical("mode of file %s should be %o but is %o",
-                            path, filemode, os.stat(path).st_mode % 0o1000)
+            raise ValueError("mode of file %s should be %o but is %o" %
+                             (path, filemode, os.stat(path).st_mode % 0o1000))
     else:
-        logger.critical("should be a regular file or dir: %s", path)
+        raise ValueError("should be a regular file or dir: %s" % path)
 
 
 def check_permissions(path, userid, groupid, dirmode, filemode):
