@@ -567,7 +567,7 @@ def check_configuration(options):
     for name in options['paths']:
         path = options['paths'][name]
         if not os.path.isdir(path):
-            error_exit(name + " is not a directory: ", path)
+            error_exit("%s is not a directory: %s" % (name, path))
 
     if options['interval'] <= 0:
         error_exit("Invalid interval: " + options['interval'])
