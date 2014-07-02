@@ -269,6 +269,7 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
         '--link',
         '--no-dereference',  # symbolic links could point anywhere
         '--recursive',
+        '--no-clobber',
         '--',
         str(source),
         str(workdest),
@@ -292,6 +293,10 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
         logger.debug("Created links in workdir. Moving to destination")
         if perms is not None:
             check_permissions(workdest, **perms)
+
+        # TODO race condition
+        if os.path.exists((dest)):
+            raise ValueError("Destination exists: %s", dest)
         os.rename(workdest, dest)
     except:  # even for SystemExit
         logger.error("Got exception before we finished copying files. " +
