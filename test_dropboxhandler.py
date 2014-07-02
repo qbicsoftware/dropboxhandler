@@ -5,20 +5,15 @@ from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
     write_checksum, recursive_link, generate_openbis_name
 )
-from nose.tools import istest, raises
+from nose.tools import raises
 import tempfile
 import subprocess
 import os
 import shutil
 import signal
 import time
-from collections import namedtuple
 from os.path import join as pjoin
 from os.path import exists as pexists
-try:
-    from unittest import mock
-except ImportError:
-    mock = namedtuple('mock', ['patch'])(lambda s: lambda f: lambda: f(s))
 
 init_logging({'loglevel': 'DEBUG', 'use_conf_file_logging': False,
               'paths': {'incoming': '/path/to/incoming'}})
@@ -98,9 +93,7 @@ def test_write_checksum():
     shutil.rmtree(dir)
 
 
-@istest
-@mock.patch('dropboxhandler.logger')
-def test_recursive_link(mock_logger):
+def test_recursive_link():
     base = tempfile.mkdtemp()
 
     source = os.path.join(base, 'data')
@@ -111,13 +104,12 @@ def test_recursive_link(mock_logger):
         pass
 
     dest = os.path.join(base, 'dest')
-    recursive_link(source, dest)
-    assert os.path.exists(os.path.join(dest, 'data.txt'))
-    assert not os.path.exists(os.path.join(dest, 'link'))
-
-    # py3 only
-    if not isinstance(mock_logger, str):
-        assert "Removing..." in mock_logger.error.call_args[0][0]
+    try:
+        recursive_link(source, dest)
+    except ValueError:
+        pass
+    else:
+        assert False
     shutil.rmtree(base)
 
 

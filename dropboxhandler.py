@@ -26,6 +26,12 @@ try:
 except ImportError:
     import ConfigParser as configparser
 
+logger = None
+
+BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
+FINISHED_MARKER = ".MARKER_is_finished_"
+ERROR_MARKER = "MARKER_error_"
+
 
 # python 2.6 compat
 if not hasattr(subprocess, 'check_output'):
@@ -46,13 +52,6 @@ if not hasattr(subprocess, 'check_output'):
         return stdout
 
     subprocess.check_output = check_output
-
-
-logger = None
-
-BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
-FINISHED_MARKER = ".MARKER_is_finished_"
-ERROR_MARKER = "MARKER_error_"
 
 
 def init_logging(options):
@@ -82,7 +81,7 @@ def init_logging(options):
 
 
 def write_checksum(file):
-    """ Compute checksums of file or of contents, if file is dir.
+    """ Compute checksums of file or of contents if it is a dir.
 
     Checksums will be written to <inputfile>.sha256 in the
     format of the sha256sum tool.
@@ -154,7 +153,6 @@ def extract_barcode(path):
     if not barcodes:
         raise ValueError("no barcodes found")
     if len(barcodes) > 1 and any(b != barcodes[0] for b in barcodes):
-        logger.error("More than one barcode in filename")
         raise ValueError("more than one barcode in filename")
 
     return barcodes[0]
@@ -166,11 +164,9 @@ def clean_filename(path):
     stem, suffix = os.path.splitext(os.path.basename(path))
     cleaned_stem = ''.join(i for i in stem if i in allowed_chars)
     if not cleaned_stem:
-        logger.error("Can not clean names without legal chars")
         raise ValueError("Invalid file name: %s", stem + suffix)
 
     if not all(i in allowed_chars + '.' for i in suffix):
-        logger.error("Got file with invalid chars in suffix: " + str(path))
         raise ValueError("Bad file suffix: " + suffix)
 
     return cleaned_stem + suffix.lower()
@@ -217,11 +213,10 @@ def _check_perms(path, userid, groupid, dirmode, filemode):
 
 
 def check_permissions(path, userid, groupid, dirmode, filemode):
-    """ Basic sanity check for permissions of file written by this daemon
+    """ Basic sanity check for permissions of file written by this daemon.
 
-    This exists to find configuration issues only.
-
-    Will not raise errors, but write them to logger.
+    Raises ValueError, if permissions are not as specified, or for files
+    that are not regular files or directories.
     """
     _check_perms(path, userid, groupid, dirmode, filemode)
     for path, dirnames, filenames in os.walk(path):
@@ -285,15 +280,16 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
                 path = os.path.join(root, file)
                 stats = os.lstat(path)
                 if stat.S_IFMT(stats.st_mode) == stat.S_IFLNK:
-                    logger.error("Got symbolic link in source to %s. " +
-                                 "Removing...",
-                                 os.readlink(path))
-                    os.unlink(path)
+                    raise ValueError(
+                        "Symbolic links are not allowed. %s is a link to %s" %
+                        (path, os.readlink(path))
+                    )
 
-        logger.debug("Created links in workdir. Moving to destination")
         if perms is not None:
+            logger.debug("Checking permissions: %s", perms)
             check_permissions(workdest, **perms)
 
+        logger.debug("Created links in workdir. Moving to destination")
         # TODO race condition
         if os.path.exists((dest)):
             raise ValueError("Destination exists: %s", dest)
