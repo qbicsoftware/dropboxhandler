@@ -104,7 +104,7 @@ def write_checksum(file):
     ).split(b'\0')[:-1]
 
     if not files:
-        raise ValueError("%s has no files to checksum", file)
+        raise ValueError("%s has no files to checksum" % file)
 
     try:
         with open(checksum_file, 'wb') as f:
@@ -459,6 +459,7 @@ def parse_args():
         'group': None,
         'filemode': 0o660,
         'dirmode': 0o770,
+        'umask': 0o077,
     }
 
     parser = argparse.ArgumentParser(
@@ -493,6 +494,8 @@ def parse_args():
                         "(e.g. '0o660')")
     parser.add_argument('--dirmode', default=None,
                         help="permissons of all incoming and outgoing dirs")
+    parser.add_argument('--umask', default=None,
+                        help="Set umask in the same format at filemode")
 
     args = parser.parse_args()
 
@@ -542,7 +545,7 @@ def merge_configuration(args, config, defaults):
             if config.has_option('options', name):
                 cleaned_config[name] = config.getint('options', name)
 
-        for name in ['filemode', 'dirmode']:
+        for name in ['filemode', 'dirmode', 'umask']:
             if config.has_option('options', name):
                 cleaned_config[name] = int(config.get('options', name), base=8)
 
@@ -578,7 +581,7 @@ def check_configuration(options):
             perms['userid'] = os.geteuid()
         else:
             try:
-                perms['userid'] = pwd.getpwnam(options['group']).pw_uid
+                perms['userid'] = pwd.getpwnam(options['users']).pw_uid
             except KeyError:
                 error_exit("User '%s' does not exist." % options['user'])
 
@@ -603,7 +606,7 @@ def print_example_config():
         print(f.read())
 
 
-def daemonize(func, pidfile, *args, **kwargs):
+def daemonize(func, pidfile, umask, *args, **kwargs):
     """ Run ``func`` in new process independent from this one.
 
     Write the pid of the new daemon to pidfile.
@@ -632,6 +635,7 @@ def daemonize(func, pidfile, *args, **kwargs):
 
     logger.info("PID of new daemon: %s", os.getpid())
 
+    os.umask(umask)
     write_pidfile(pidfile)
     close_open_fds()
     init_signal_handler()
@@ -682,10 +686,11 @@ def main():
     try:
         # start checking for new files
         if args['daemon']:
-            daemonize(listen, args['pidfile'], args['interval'], perms=perms,
-                      **args['paths'])
+            daemonize(listen, args['pidfile'], args['umask'],
+                      args['interval'], perms=perms, **args['paths'])
         else:
             init_signal_handler()
+            os.umask(args['umask'])
             listen(args['interval'], perms=perms, **args['paths'])
 
     except Exception:

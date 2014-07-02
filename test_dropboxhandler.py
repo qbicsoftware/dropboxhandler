@@ -125,6 +125,7 @@ class TestIntegration:
 
         self.pidfile = pjoin(self.base, 'pidfile')
         self.conf = os.path.join(self.base, 'dropbox.conf')
+        self.umask = '0o077'
         with open(self.conf, 'w') as f:
             f.write("[paths]\n")
             for name in self.names:
@@ -133,7 +134,9 @@ class TestIntegration:
 
             f.write('[options]\n')
             f.write('interval = 1\n')
-            f.write('filemode = 0o644')
+            f.write('filemode = 0o644\n')
+            f.write('dirmode = 0o755\n')
+            f.write('umask = %s\n' % self.umask)
 
         self.logfile = pjoin(self.base, 'log')
         subprocess.check_call(
@@ -155,6 +158,20 @@ class TestIntegration:
         fdata = os.path.join(self.paths['incoming'], name)
         with open(fdata, 'w') as f:
             f.write('hi')
+
+        marker = os.path.join(self.paths['incoming'],
+                              ".MARKER_is_finished_" + name)
+        with open(marker, 'w'):
+            pass
+
+        time.sleep(1.2)
+
+    def _send_dir(self, name, *files):
+        dir = os.path.join(self.paths['incoming'], name)
+        os.mkdir(dir)
+        for file in files:
+            with open(pjoin(dir, file), 'w') as f:
+                f.write('blubb')
 
         marker = os.path.join(self.paths['incoming'],
                               ".MARKER_is_finished_" + name)
@@ -188,6 +205,14 @@ class TestIntegration:
         marker_name = 'MARKER_error_.MARKER_is_finished_foo'
         error_marker = pjoin(self.paths['incoming'], marker_name)
         assert pexists(error_marker)
+
+    def test_umask(self):
+        self._send_dir('testdir', 'file1')
+        outpath = pjoin(self.paths['manual'], 'testdir')
+        assert pexists(outpath)
+        assert os.path.isdir(outpath)
+        assert pexists(pjoin(outpath, 'file1'))
+        assert os.stat(outpath).st_mode & int(self.umask, 8) == 0
 
     def test_openbis(self):
         self._send_file("äää  \t({QJFDC066BI.RAw")
