@@ -229,15 +229,15 @@ def check_permissions(path, userid, groupid, dirmode, filemode):
 def init_signal_handler():
     def handler(sig, frame):
         if sig == signal.SIGTERM:
-            logging.info("Daemon got SIGTERM. Shutting down.")
+            logger.info("Daemon got SIGTERM. Shutting down.")
             sys.exit(0)
         elif sig == signal.SIGCONT:
-            logging.info("Daemon got SIGCONT. Continuing.")
+            logger.info("Daemon got SIGCONT. Continuing.")
         elif sig == signal.SIGINT:
-            logging.info("Daemon got SIGINT. Shutting down.")
+            logger.info("Daemon got SIGINT. Shutting down.")
             sys.exit(0)
         else:
-            logging.error("Signal handler did not expect to get %s", sig)
+            logger.error("Signal handler did not expect to get %s", sig)
 
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGCONT, handler)
@@ -558,6 +558,7 @@ def merge_configuration(args, config, defaults):
     defaults.update(cleaned_config)
     defaults.update(cleaned_args)
     defaults['pidfile'] = os.path.expanduser(defaults['pidfile'])
+    defaults['pidfile'] = os.path.abspath(defaults['pidfile'])
     return defaults
 
 
@@ -581,7 +582,7 @@ def check_configuration(options):
             perms['userid'] = os.geteuid()
         else:
             try:
-                perms['userid'] = pwd.getpwnam(options['users']).pw_uid
+                perms['userid'] = pwd.getpwnam(options['user']).pw_uid
             except KeyError:
                 error_exit("User '%s' does not exist." % options['user'])
 
