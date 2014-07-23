@@ -26,6 +26,9 @@ try:
 except ImportError:
     import ConfigParser as configparser
 
+if not hasattr(__builtins__, 'FileExistsError'):
+    FileExistsError = OSError
+
 logger = None
 
 BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
@@ -310,11 +313,15 @@ def to_openbis(file, openbis_dir, tmpdir=None, perms=None):
     If the filename does not include an openbis barcode, raise ValueError.
 
     file, openbis_dir and tmpdir must all be on the same file system.
+
+
+    TODO:
+    - save orig fn in `name.origlabfilename`
+    - add checksum file
     """
     file = os.path.abspath(file)
 
     if os.path.isdir(file):
-        logging.debug("Can not send directory %s to openbis", file)
         raise ValueError("Sending directories to openbis is not supported")
 
     try:
@@ -334,7 +341,29 @@ def to_openbis(file, openbis_dir, tmpdir=None, perms=None):
 
 
 def to_storage(file, storage_dir, tmpdir=None, perms=None):
-    logger.debug("to_storage is not implemented, ignoring")
+    """Store file in a subdir of storage_dir with the name of the project.
+
+    The first 4 letters of the barcode are the project name. If no barcode
+    is found, it will use the name 'other'.
+    """
+    file = os.path.abspath(file)
+
+    try:
+        project = extract_barcode(file)[:5]
+        name = generate_openbis_name(file)
+    except ValueError:
+        name = clean_filename(file)
+        project = 'other'
+
+    dest = os.path.join(storage_dir, project, name)
+
+    try:
+        os.mkdir(os.path.join(storage_dir, project))
+    except FileExistsError:
+        pass
+
+    recursive_link(file, dest, tmpdir=tmpdir, perms=perms)
+    write_checksum(dest)
 
 
 def to_manual(file, manual_dir, tmpdir=None, perms=None):
@@ -343,7 +372,7 @@ def to_manual(file, manual_dir, tmpdir=None, perms=None):
 
     cleaned_name = clean_filename(file)
     dest = os.path.join(manual_dir, cleaned_name)
-    recursive_link(file, dest, tmpdir=tmpdir, perms=None)
+    recursive_link(file, dest, tmpdir=tmpdir, perms=perms)
     logger.info("manual intervention is required for %s", file)
     write_checksum(dest)
 
@@ -360,10 +389,9 @@ def make_links(file, openbis_dir, manual_dir, storage_dir,
 
     try:
         to_openbis(file, openbis_dir, tmpdir=tmpdir, perms=perms)
+        to_storage(file, storage_dir, tmpdir=tmpdir, perms=perms)
     except ValueError:
         to_manual(file, manual_dir, tmpdir=tmpdir, perms=perms)
-    finally:
-        to_storage(file, storage_dir, tmpdir=tmpdir, perms=perms)
 
     logger.debug("Removing original file %s", file)
     try:
@@ -508,8 +536,7 @@ def parse_args():
         print("Could not find config file (default location: " +
               "~/.dropboxhandler.conf", file=sys.stderr)
         sys.exit(1)
-    #interpolator = configparser.ExtendedInterpolation()
-    #config = configparser.ConfigParser(interpolation=interpolator)
+
     config = configparser.ConfigParser()
     config.read([args.conf_file])
 

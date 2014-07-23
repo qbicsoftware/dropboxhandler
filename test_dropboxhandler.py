@@ -3,7 +3,8 @@
 from __future__ import print_function
 from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
-    write_checksum, recursive_link, generate_openbis_name
+    write_checksum, recursive_link, generate_openbis_name,
+    to_storage
 )
 from nose.tools import raises
 import tempfile
@@ -14,6 +15,10 @@ import signal
 import time
 from os.path import join as pjoin
 from os.path import exists as pexists
+try:
+    from unittest import mock
+except ImportError:
+    import mock
 
 init_logging({'loglevel': 'DEBUG', 'use_conf_file_logging': False,
               'paths': {'incoming': '/path/to/incoming'}})
@@ -113,6 +118,29 @@ def test_recursive_link():
     shutil.rmtree(base)
 
 
+@mock.patch('dropboxhandler.write_checksum')
+@mock.patch('os.mkdir')
+@mock.patch('dropboxhandler.recursive_link')
+def test_to_storage(link, mkdir, chksum):
+    to_storage('/tmp/bob.txt', '/tmp/storagedir')
+    mkdir.assert_called_with('/tmp/storagedir/other')
+    link.assert_called_with('/tmp/bob.txt', '/tmp/storagedir/other/bob.txt',
+                            tmpdir=None, perms=None)
+
+
+@mock.patch('dropboxhandler.write_checksum')
+@mock.patch('os.mkdir')
+@mock.patch('dropboxhandler.recursive_link')
+def test_to_storage_barcode(link, mkdir, chksum):
+    to_storage('/tmp/QJFDC010EUää.txt', '/tmp/storagedir')
+    mkdir.assert_called_with('/tmp/storagedir/QJFDC')
+    link.assert_called_with(
+        '/tmp/QJFDC010EUää.txt',
+        '/tmp/storagedir/QJFDC/QJFDC010EU_QJFDC010EU.txt',
+        tmpdir=None, perms=None
+    )
+
+
 class TestIntegration:
 
     def setUp(self):
@@ -126,6 +154,7 @@ class TestIntegration:
         self.pidfile = pjoin(self.base, 'pidfile')
         self.conf = os.path.join(self.base, 'dropbox.conf')
         self.umask = '0o077'
+        os.umask(int(self.umask, 8))
         with open(self.conf, 'w') as f:
             f.write("[paths]\n")
             for name in self.names:
@@ -134,8 +163,8 @@ class TestIntegration:
 
             f.write('[options]\n')
             f.write('interval = 1\n')
-            f.write('filemode = 0o644\n')
-            f.write('dirmode = 0o755\n')
+            f.write('filemode = 0o600\n')
+            f.write('dirmode = 0o700\n')
             f.write('umask = %s\n' % self.umask)
 
         self.logfile = pjoin(self.base, 'log')
@@ -220,3 +249,8 @@ class TestIntegration:
         assert pexists(pjoin(self.paths['openbis'], expected_name))
         marker = '.MARKER_is_finished_' + expected_name
         assert pexists(pjoin(self.paths['openbis'], marker))
+
+    def test_storage(self):
+        self._send_file('hi_barcode:QJFDC066BI.mzml')
+        assert pexists(pjoin(self.paths['storage'], 'QJFDC',
+                             'QJFDC066BI_hi_barcodeQJFDC066BI.mzml'))

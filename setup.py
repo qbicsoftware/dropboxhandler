@@ -2,12 +2,15 @@ from setuptools import setup
 import sys
 
 install_requires = []
-if not sys.version_info >= (2, 7):
+if sys.version_info < (2, 7):
     install_requires.append("argparse")
+
+if sys.version_info < (3, 3):
+    install_requires.append("mock")
 
 setup(
     name='dropboxhandler',
-    version='1.0',
+    version='1.2.0',
     author='Adrian Seyboldt',
     author_email='adrian.seyboldt@web.de',
     py_modules=['dropboxhandler'],
