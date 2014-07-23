@@ -57,6 +57,19 @@ if not hasattr(subprocess, 'check_output'):
     subprocess.check_output = check_output
 
 
+# python2 does not allow open(..., mode='x')
+def create_open(path):
+    if sys.version_info < (3, 3):
+        fd = os.open(path, os.O_CREAT | os.O_NOFOLLOW | os.O_WRONLY)
+        try:
+            file = os.fdopen(fd, 'w')
+        except OSError:
+            os.close(fd)
+        return file
+    else:
+        return open(path, mode='x')
+
+
 def init_logging(options):
     global logger
 
@@ -316,28 +329,29 @@ def to_openbis(file, openbis_dir, tmpdir=None, perms=None):
 
 
     TODO:
-    - save orig fn in `name.origlabfilename`
     - add checksum file
     """
     file = os.path.abspath(file)
 
+    base, orig_name = os.path.split(file)
+
     if os.path.isdir(file):
         raise ValueError("Sending directories to openbis is not supported")
 
-    try:
-        openbis_name = generate_openbis_name(file)
-    except ValueError:
-        logging.debug("Can not find a barcode in %s", file)
-        raise
+    openbis_name = generate_openbis_name(file)
 
     logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
     dest = os.path.join(openbis_dir, openbis_name)
     recursive_link(file, dest, tmpdir=tmpdir, perms=None)
 
+    labname_file = "%s.origlabfilename" % openbis_name
+    with create_open(os.path.join(openbis_dir, labname_file)) as f:
+        f.write(orig_name)
+
     # tell openbis that we are finished copying
-    base, name = os.path.split(dest)
-    with open(os.path.join(base, FINISHED_MARKER + name), 'w'):
-        pass
+    for name in [openbis_name, labname_file]:
+        with create_open(os.path.join(openbis_dir, FINISHED_MARKER + name)):
+            pass
 
 
 def to_storage(file, storage_dir, tmpdir=None, perms=None):
@@ -678,18 +692,10 @@ def daemonize(func, pidfile, umask, *args, **kwargs):
 def write_pidfile(pidfile):
     pidfile = os.path.expanduser(str(pidfile))
 
-    # open(file, 'x') not available in python 2.6
-    if sys.version_info >= (3, 3):
-        mode = 'x'
-    else:
-        mode = 'w'
-        if os.path.exists(pidfile):
-            error_exit("Pidfile %s exists. Is the daemon running?" % pidfile)
-
     try:
-        with open(pidfile, mode) as f:
+        with create_open(pidfile) as f:
             f.write(str(os.getpid()) + '\n')
-    except OSError:
+    except FileExistsError:
         error_exit("Could not write pidfile %s. Is the daemon running?" %
                    pidfile)
         sys.exit(1)

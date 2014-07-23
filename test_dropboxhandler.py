@@ -183,6 +183,13 @@ class TestIntegration:
         assert not os.path.exists(self.pidfile)
         shutil.rmtree(self.base)
 
+    @raises(subprocess.CalledProcessError)
+    def test_running(self):
+        subprocess.check_call(
+            'dropboxhandler -c %s -d' % (self.conf),
+            shell=True
+        )
+
     def _send_file(self, name):
         fdata = os.path.join(self.paths['incoming'], name)
         with open(fdata, 'w') as f:
@@ -249,6 +256,17 @@ class TestIntegration:
         assert pexists(pjoin(self.paths['openbis'], expected_name))
         marker = '.MARKER_is_finished_' + expected_name
         assert pexists(pjoin(self.paths['openbis'], marker))
+
+        origname_file = pjoin(
+            self.paths['openbis'], expected_name + '.origlabfilename'
+        )
+        assert pexists(origname_file)
+        with open(origname_file, 'r') as f:
+            assert f.read() == "äää  \t({QJFDC066BI.RAw"
+        assert pexists(pjoin(
+            self.paths['openbis'],
+            '.MARKER_is_finished_' + expected_name + '.origlabfilename'
+        ))
 
     def test_storage(self):
         self._send_file('hi_barcode:QJFDC066BI.mzml')
