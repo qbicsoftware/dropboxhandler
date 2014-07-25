@@ -8,6 +8,9 @@ if sys.version_info < (2, 7):
 if sys.version_info < (3, 3):
     install_requires.append("mock")
 
+if sys.version_info < (3, 2):
+    install_requires.append('futures')
+
 setup(
     name='dropboxhandler',
     version='1.2.0',

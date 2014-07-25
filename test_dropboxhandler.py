@@ -1,10 +1,11 @@
 # coding: utf8
 
 from __future__ import print_function
+import dropboxhandler
 from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
     write_checksum, recursive_link, generate_openbis_name,
-    to_storage
+    FileHandler,
 )
 from nose.tools import raises
 import tempfile
@@ -15,6 +16,7 @@ import signal
 import time
 from os.path import join as pjoin
 from os.path import exists as pexists
+import sys
 try:
     from unittest import mock
 except ImportError:
@@ -22,6 +24,9 @@ except ImportError:
 
 init_logging({'loglevel': 'DEBUG', 'use_conf_file_logging': False,
               'paths': {'incoming': '/path/to/incoming'}})
+
+# python 2.6 compat
+#subprocess.check_output = dropboxhandler.subprocess.check_output
 
 
 @raises(ValueError)
@@ -67,8 +72,8 @@ def test_write_checksum():
     with open(data + '.sha256') as f:
         print(f.read())
     subprocess.check_call('sha256sum -c --status %s.sha256' % data,
-                          shell=True,
-                          cwd=dir)
+                          shell=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, cwd=dir)
 
     with open(data, 'w') as f:
         f.write("blubb")
@@ -76,7 +81,7 @@ def test_write_checksum():
     try:
         subprocess.check_call(
             'sha256sum -c --status --strict %s.sha256' % data,
-            shell=True, cwd=dir
+            shell=True, cwd=dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         assert False
     except subprocess.CalledProcessError:
@@ -92,8 +97,8 @@ def test_write_checksum():
     write_checksum(datadir)
 
     subprocess.check_call('sha256sum -c --status %s.sha256' % datadir,
-                          cwd=dir,
-                          shell=True)
+                          cwd=dir, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, shell=True)
 
     shutil.rmtree(dir)
 
@@ -122,7 +127,10 @@ def test_recursive_link():
 @mock.patch('os.mkdir')
 @mock.patch('dropboxhandler.recursive_link')
 def test_to_storage(link, mkdir, chksum):
-    to_storage('/tmp/bob.txt', '/tmp/storagedir')
+    target_dirs = {'manual': None, 'openbis': None,
+                   'storage': '/tmp/storagedir'}
+    handler = FileHandler(target_dirs)
+    handler.to_storage('/tmp/bob.txt')
     mkdir.assert_called_with('/tmp/storagedir/other')
     link.assert_called_with('/tmp/bob.txt', '/tmp/storagedir/other/bob.txt',
                             tmpdir=None, perms=None)
@@ -132,7 +140,10 @@ def test_to_storage(link, mkdir, chksum):
 @mock.patch('os.mkdir')
 @mock.patch('dropboxhandler.recursive_link')
 def test_to_storage_barcode(link, mkdir, chksum):
-    to_storage('/tmp/QJFDC010EUää.txt', '/tmp/storagedir')
+    target_dirs = {'manual': None, 'openbis': None,
+                   'storage': '/tmp/storagedir'}
+    handler = FileHandler(target_dirs)
+    handler.to_storage('/tmp/QJFDC010EUää.txt')
     mkdir.assert_called_with('/tmp/storagedir/QJFDC')
     link.assert_called_with(
         '/tmp/QJFDC010EUää.txt',
@@ -168,8 +179,8 @@ class TestIntegration:
             f.write('umask = %s\n' % self.umask)
 
         self.logfile = pjoin(self.base, 'log')
-        subprocess.check_call(
-            'dropboxhandler -c %s -d' % (self.conf),
+        subprocess.Popen(
+            'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
             shell=True
         )
         time.sleep(0.2)
@@ -180,14 +191,16 @@ class TestIntegration:
 
         os.kill(pid, signal.SIGTERM)
         time.sleep(0.2)
+        with open(self.logfile) as f:
+            print(f.read())
         assert not os.path.exists(self.pidfile)
         shutil.rmtree(self.base)
 
     @raises(subprocess.CalledProcessError)
     def test_running(self):
         subprocess.check_call(
-            'dropboxhandler -c %s -d' % (self.conf),
-            shell=True
+            'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
+            shell=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE
         )
 
     def _send_file(self, name):
@@ -222,6 +235,9 @@ class TestIntegration:
         assert pexists(pjoin(self.paths['manual'], 'dataa.txt.sha256'))
         with open(pjoin(self.paths['manual'], 'dataa.txt.sha256')) as f:
             assert 'dataa.txt' in f.read()
+        origfile = pjoin(self.paths['manual'], 'dataa.txt.origlabfilename')
+        with open(origfile) as f:
+            assert f.read() == 'dataaä .txt'
 
     def test_empty(self):
         self._send_file(' ä')
