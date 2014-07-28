@@ -66,7 +66,9 @@ def create_open(path):
             file = os.fdopen(fd, 'w')
         except OSError:
             os.close(fd)
-        return file
+            raise
+        else:
+            return file
     else:
         return open(path, mode='x')
 
@@ -330,7 +332,6 @@ class FileHandler():
         self._openbis_dir = target_dirs['openbis']
         self._storage_dir = target_dirs['storage']
         self._manual_dir = target_dirs['manual']
-        #self._msconvert_dir = target_dirs['msconvert']
         self._tmpdir = tmpdir
         self._perms = perms
 
@@ -410,7 +411,6 @@ class FileHandler():
 
         write_checksum(dest)
 
-    """
     def to_msconvert(self, file):
         fscall = None
         future = fscall.submit(self._msconvert_dir, [file])
@@ -429,36 +429,48 @@ class FileHandler():
                     message_to_admin()
 
         future.add_done_callback(export_result)
-    """
 
     def make_links(self, file):
         """ Figure out to which dirs file should be linked. """
-        file = os.path.abspath(file)
-
-        logger.debug("processing file " + str(file))
-
-        if self._perms is not None:
-            check_permissions(file, **self._perms)
-
         try:
-            self.to_openbis(file)
-            self.to_storage(file)
-        except ValueError:
-            self.to_manual(file)
+            file = os.path.abspath(file)
 
-        logger.debug("Removing original file %s", file)
-        try:
-            if os.path.isfile(file):
-                os.unlink(file)
-            elif os.path.isdir(file):
-                shutil.rmtree(str(file))
-            else:
-                logger.error(
-                    "Could not remove file, it is not a regular file: %s", file
-                )
-        except Exception:
-            logger.error("Could not remove file %s", file)
-            raise
+            logger.debug("processing file " + str(file))
+
+            if self._perms is not None:
+                check_permissions(file, **self._perms)
+
+            try:
+                self.to_openbis(file)
+                self.to_storage(file)
+            except ValueError:
+                self.to_manual(file)
+
+            logger.debug("Removing original file %s", file)
+            try:  # TODO this is a race condition!!!
+                if os.path.isfile(file):
+                    os.unlink(file)
+                elif os.path.isdir(file):
+                    shutil.rmtree(str(file))
+                else:
+                    logger.error("Could not remove file, it is not a " +
+                                 "regular file: %s", file)
+            except Exception:
+                logger.error("Could not remove original file %s after " +
+                             "handeling the file correctly", file)
+                raise
+        except BaseException:
+            incoming, filename = os.path.split(file)
+            error_marker = os.path.join(
+                incoming,
+                ERROR_MARKER + filename
+            )
+            logger.exception("An error occured while handeling file. " +
+                             "Creating error marker file %s, remove if " +
+                             "you fixed the error. Error was:",
+                             error_marker)
+            with open(error_marker, 'w') as f:
+                traceback.print_exc(file=f)
 
 
 def listen(interval, executor, incoming, target_dirs, tmpdir=None, perms=None):
@@ -486,6 +498,8 @@ def listen(interval, executor, incoming, target_dirs, tmpdir=None, perms=None):
                     raise ValueError("Got bare marker file: %s" % marker)
 
                 logger.info("New file arrived: %s", file)
+                logger.debug("Removing marker for file %s", file)
+                os.unlink(marker)
 
                 if (filename.startswith(FINISHED_MARKER) or
                         filename.startswith(ERROR_MARKER)):
@@ -496,17 +510,14 @@ def listen(interval, executor, incoming, target_dirs, tmpdir=None, perms=None):
                                      (marker, file))
 
                 handler = FileHandler(target_dirs, tmpdir, perms)
-                logger.debug("Removing marker for file %s", file)
-                os.unlink(marker)
+                executor.submit(handler.make_links, file)
 
-                executor.submit(handler.make_links(file))
-
-            except Exception:
+            except BaseException:
                 error_marker = os.path.join(
                     incoming,
                     ERROR_MARKER + filename
                 )
-                logger.exception("An error occured while moving files. " +
+                logger.exception("An error occured while submitting job. " +
                                  "Creating error marker file %s, remove if " +
                                  "you fixed the error. Error was:",
                                  error_marker)
@@ -547,7 +558,7 @@ def parse_args():
                         help="Print a example config file to stdout.",
                         action="store_true", default=False)
     parser.add_argument('-t', help="interval [s] between checks for " +
-                        "new files", type=int, dest='interval')
+                        "new files", type=float, dest='interval')
     parser.add_argument('--no-permissions', dest='permissions',
                         help="do not set and check permissions of input " +
                         "and output files", action='store_false')
@@ -601,7 +612,7 @@ def merge_configuration(args, config, defaults):
     cleaned_config['paths'] = {}
     for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
         if not config.has_option("paths", name):
-            error_exit("Section 'paths' must include '%s'" % name)
+            error_exit("Section 'paths' must contain '%s'" % name)
         cleaned_config['paths'][name] = os.path.expanduser(
             config.get('paths', name)
         )
@@ -615,7 +626,7 @@ def merge_configuration(args, config, defaults):
 
         for name in ['interval']:
             if config.has_option('options', name):
-                cleaned_config[name] = config.getint('options', name)
+                cleaned_config[name] = config.getfloat('options', name)
 
         for name in ['filemode', 'dirmode', 'umask']:
             if config.has_option('options', name):
