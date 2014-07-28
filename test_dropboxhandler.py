@@ -1,7 +1,6 @@
 # coding: utf8
 
 from __future__ import print_function
-import dropboxhandler
 from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
     write_checksum, recursive_link, generate_openbis_name,
@@ -16,7 +15,6 @@ import signal
 import time
 from os.path import join as pjoin
 from os.path import exists as pexists
-import sys
 try:
     from unittest import mock
 except ImportError:
@@ -24,9 +22,6 @@ except ImportError:
 
 init_logging({'loglevel': 'DEBUG', 'use_conf_file_logging': False,
               'paths': {'incoming': '/path/to/incoming'}})
-
-# python 2.6 compat
-#subprocess.check_output = dropboxhandler.subprocess.check_output
 
 
 @raises(ValueError)
@@ -173,7 +168,7 @@ class TestIntegration:
             f.write('pidfile = %s\n' % self.pidfile)
 
             f.write('[options]\n')
-            f.write('interval = 1\n')
+            f.write('interval = .03\n')
             f.write('filemode = 0o600\n')
             f.write('dirmode = 0o700\n')
             f.write('umask = %s\n' % self.umask)
@@ -183,14 +178,14 @@ class TestIntegration:
             'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
             shell=True
         )
-        time.sleep(0.2)
+        time.sleep(.1)
 
     def tearDown(self):
         with open(self.pidfile) as f:
             pid = int(f.read())
 
         os.kill(pid, signal.SIGTERM)
-        time.sleep(0.2)
+        time.sleep(0.3)
         with open(self.logfile) as f:
             print(f.read())
         assert not os.path.exists(self.pidfile)
@@ -213,7 +208,7 @@ class TestIntegration:
         with open(marker, 'w'):
             pass
 
-        time.sleep(1.2)
+        time.sleep(.2)
 
     def _send_dir(self, name, *files):
         dir = os.path.join(self.paths['incoming'], name)
@@ -227,7 +222,7 @@ class TestIntegration:
         with open(marker, 'w'):
             pass
 
-        time.sleep(1.2)
+        time.sleep(.2)
 
     def test_manual(self):
         self._send_file('dataaä .txt')
