@@ -4,7 +4,7 @@ from __future__ import print_function
 from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
     write_checksum, recursive_link, generate_openbis_name,
-    to_storage
+    FileHandler,
 )
 from nose.tools import raises
 import tempfile
@@ -15,6 +15,9 @@ import signal
 import time
 from os.path import join as pjoin
 from os.path import exists as pexists
+import fscall
+import threading
+import contextlib
 try:
     from unittest import mock
 except ImportError:
@@ -67,8 +70,8 @@ def test_write_checksum():
     with open(data + '.sha256') as f:
         print(f.read())
     subprocess.check_call('sha256sum -c --status %s.sha256' % data,
-                          shell=True,
-                          cwd=dir)
+                          shell=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, cwd=dir)
 
     with open(data, 'w') as f:
         f.write("blubb")
@@ -76,7 +79,7 @@ def test_write_checksum():
     try:
         subprocess.check_call(
             'sha256sum -c --status --strict %s.sha256' % data,
-            shell=True, cwd=dir
+            shell=True, cwd=dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         assert False
     except subprocess.CalledProcessError:
@@ -92,8 +95,8 @@ def test_write_checksum():
     write_checksum(datadir)
 
     subprocess.check_call('sha256sum -c --status %s.sha256' % datadir,
-                          cwd=dir,
-                          shell=True)
+                          cwd=dir, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, shell=True)
 
     shutil.rmtree(dir)
 
@@ -122,7 +125,10 @@ def test_recursive_link():
 @mock.patch('os.mkdir')
 @mock.patch('dropboxhandler.recursive_link')
 def test_to_storage(link, mkdir, chksum):
-    to_storage('/tmp/bob.txt', '/tmp/storagedir')
+    target_dirs = {'manual': None, 'openbis': None,
+                   'storage': '/tmp/storagedir'}
+    handler = FileHandler(target_dirs)
+    handler.to_storage('/tmp/bob.txt')
     mkdir.assert_called_with('/tmp/storagedir/other')
     link.assert_called_with('/tmp/bob.txt', '/tmp/storagedir/other/bob.txt',
                             tmpdir=None, perms=None)
@@ -132,13 +138,72 @@ def test_to_storage(link, mkdir, chksum):
 @mock.patch('os.mkdir')
 @mock.patch('dropboxhandler.recursive_link')
 def test_to_storage_barcode(link, mkdir, chksum):
-    to_storage('/tmp/QJFDC010EUää.txt', '/tmp/storagedir')
+    target_dirs = {'manual': None, 'openbis': None,
+                   'storage': '/tmp/storagedir'}
+    handler = FileHandler(target_dirs)
+    handler.to_storage('/tmp/QJFDC010EUää.txt')
     mkdir.assert_called_with('/tmp/storagedir/QJFDC')
     link.assert_called_with(
         '/tmp/QJFDC010EUää.txt',
         '/tmp/storagedir/QJFDC/QJFDC010EU_QJFDC010EU.txt',
         tmpdir=None, perms=None
     )
+
+
+class TestFileHandler:
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        self.names = ['incoming', 'tmpdir', 'storage', 'manual', 'openbis',
+                      'msconvert']
+        self.paths = {}
+        for name in self.names:
+            self.paths[name] = pjoin(self.base, name)
+            os.mkdir(self.paths[name])
+
+    def tearDown(self):
+        print('tearDown')
+        shutil.rmtree(self.base)
+
+    @contextlib.contextmanager
+    def msconvert_server(self, server_func=None):
+        try:
+            self._stop_msconvert_server = threading.Event()
+            if server_func is None:
+                def server_func(request):
+                    with request.beat():
+                        (request.outdir / "data.mzml").touch()
+                        request.success('did nothing')
+
+            def run():
+                listener = fscall.listen(
+                    listendir=self.paths['msconvert'],
+                    interval=0.05,
+                    beat_interval=0.02,
+                    stop_event=self._stop_msconvert_server
+                )
+                for request in listener:
+                    server_func(request)
+
+            self._msconvert_thread = threading.Thread(target=run)
+            self._msconvert_thread.start()
+            print("started server")
+            yield
+        finally:
+            print("stopping server")
+            self._stop_msconvert_server.set()
+            self._msconvert_thread.join()
+            assert not self._msconvert_thread.is_alive()
+            print("server has stopped")
+
+    def test_msconvert_server(self):
+        handler = FileHandler(self.paths)
+        with self.msconvert_server():
+            name = pjoin(self.paths['incoming'], 'tmpfile')
+            with open(name, 'w') as f:
+                f.write('hi')
+            handler.to_msconvert(name, beat_timeout=2)
+            assert pexists(pjoin(self.paths['manual'], 'output', 'data.mzml'))
 
 
 class TestIntegration:
@@ -162,32 +227,34 @@ class TestIntegration:
             f.write('pidfile = %s\n' % self.pidfile)
 
             f.write('[options]\n')
-            f.write('interval = 1\n')
+            f.write('interval = .03\n')
             f.write('filemode = 0o600\n')
             f.write('dirmode = 0o700\n')
             f.write('umask = %s\n' % self.umask)
 
         self.logfile = pjoin(self.base, 'log')
         subprocess.check_call(
-            'dropboxhandler -c %s -d' % (self.conf),
+            'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
             shell=True
         )
-        time.sleep(0.2)
+        time.sleep(.1)
 
     def tearDown(self):
         with open(self.pidfile) as f:
             pid = int(f.read())
 
         os.kill(pid, signal.SIGTERM)
-        time.sleep(0.2)
+        time.sleep(0.3)
+        with open(self.logfile) as f:
+            print(f.read())
         assert not os.path.exists(self.pidfile)
         shutil.rmtree(self.base)
 
     @raises(subprocess.CalledProcessError)
     def test_running(self):
         subprocess.check_call(
-            'dropboxhandler -c %s -d' % (self.conf),
-            shell=True
+            'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
+            shell=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE
         )
 
     def _send_file(self, name):
@@ -200,7 +267,7 @@ class TestIntegration:
         with open(marker, 'w'):
             pass
 
-        time.sleep(1.2)
+        time.sleep(.2)
 
     def _send_dir(self, name, *files):
         dir = os.path.join(self.paths['incoming'], name)
@@ -214,7 +281,7 @@ class TestIntegration:
         with open(marker, 'w'):
             pass
 
-        time.sleep(1.2)
+        time.sleep(.2)
 
     def test_manual(self):
         self._send_file('dataaä .txt')
@@ -222,6 +289,9 @@ class TestIntegration:
         assert pexists(pjoin(self.paths['manual'], 'dataa.txt.sha256'))
         with open(pjoin(self.paths['manual'], 'dataa.txt.sha256')) as f:
             assert 'dataa.txt' in f.read()
+        origfile = pjoin(self.paths['manual'], 'dataa.txt.origlabfilename')
+        with open(origfile) as f:
+            assert f.read() == 'dataaä .txt'
 
     def test_empty(self):
         self._send_file(' ä')

@@ -21,6 +21,8 @@ import glob
 import traceback
 import stat
 import tempfile
+import concurrent.futures
+import fscall
 try:
     import configparser
 except ImportError:
@@ -65,7 +67,9 @@ def create_open(path):
             file = os.fdopen(fd, 'w')
         except OSError:
             os.close(fd)
-        return file
+            raise
+        else:
+            return file
     else:
         return open(path, mode='x')
 
@@ -94,6 +98,10 @@ def init_logging(options):
 
     name = options['paths']['incoming']
     logger = logging.getLogger('dropboxhandler_' + name)
+
+
+def message_to_admin(message):
+    pass
 
 
 def write_checksum(file):
@@ -320,110 +328,154 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
         shutil.rmtree(tmpdir)
 
 
-def to_openbis(file, openbis_dir, tmpdir=None, perms=None):
-    """ Copy this file or directory to the openbis export directory
+class FileHandler():
+    def __init__(self, target_dirs, tmpdir=None, perms=None):
+        self._openbis_dir = target_dirs['openbis']
+        self._storage_dir = target_dirs['storage']
+        self._manual_dir = target_dirs['manual']
+        if 'msconvert' in target_dirs:
+            self._msconvert_dir = target_dirs['msconvert']
+        self._tmpdir = tmpdir
+        self._perms = perms
 
-    If the filename does not include an openbis barcode, raise ValueError.
+    def to_openbis(self, file):
+        """ Copy this file or directory to the openbis export directory
 
-    file, openbis_dir and tmpdir must all be on the same file system.
+        If the filename does not include an openbis barcode, raise ValueError.
+
+        file, openbis_dir and tmpdir must all be on the same file system.
 
 
-    TODO:
-    - add checksum file
-    """
-    file = os.path.abspath(file)
+        TODO:
+        - add checksum file
+        """
+        file = os.path.abspath(file)
 
-    base, orig_name = os.path.split(file)
+        base, orig_name = os.path.split(file)
 
-    if os.path.isdir(file):
-        raise ValueError("Sending directories to openbis is not supported")
+        if os.path.isdir(file):
+            raise ValueError("Sending directories to openbis is not supported")
 
-    openbis_name = generate_openbis_name(file)
+        openbis_name = generate_openbis_name(file)
 
-    logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
-    dest = os.path.join(openbis_dir, openbis_name)
-    recursive_link(file, dest, tmpdir=tmpdir, perms=None)
+        logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
+        dest = os.path.join(self._openbis_dir, openbis_name)
+        recursive_link(file, dest, tmpdir=self._tmpdir, perms=self._perms)
 
-    labname_file = "%s.origlabfilename" % openbis_name
-    with create_open(os.path.join(openbis_dir, labname_file)) as f:
-        f.write(orig_name)
+        labname_file = "%s.origlabfilename" % openbis_name
+        with create_open(os.path.join(self._openbis_dir, labname_file)) as f:
+            f.write(orig_name)
 
-    # tell openbis that we are finished copying
-    for name in [openbis_name, labname_file]:
-        with create_open(os.path.join(openbis_dir, FINISHED_MARKER + name)):
+        # tell openbis that we are finished copying
+        for name in [openbis_name, labname_file]:
+            marker = os.path.join(self._openbis_dir, FINISHED_MARKER + name)
+            with create_open(marker):
+                pass
+
+    def to_storage(self, file):
+        """Store file in a subdir of storage_dir with the name of the project.
+
+        The first 4 letters of the barcode are the project name. If no barcode
+        is found, it will use the name 'other'.
+        """
+        file = os.path.abspath(file)
+
+        try:
+            project = extract_barcode(file)[:5]
+            name = generate_openbis_name(file)
+        except ValueError:
+            name = clean_filename(file)
+            project = 'other'
+
+        dest = os.path.join(self._storage_dir, project, name)
+
+        try:
+            os.mkdir(os.path.join(self._storage_dir, project))
+        except FileExistsError:
             pass
 
+        recursive_link(file, dest, tmpdir=self._tmpdir, perms=self._perms)
+        write_checksum(dest)
 
-def to_storage(file, storage_dir, tmpdir=None, perms=None):
-    """Store file in a subdir of storage_dir with the name of the project.
+    def to_manual(self, file):
+        """ Copy this file to the directory for manual intervention"""
+        file = os.path.abspath(file)
+        base, name = os.path.split(file)
+        cleaned_name = clean_filename(file)
+        dest = os.path.join(self._manual_dir, cleaned_name)
+        recursive_link(file, dest, tmpdir=self._tmpdir, perms=self._perms)
+        logger.info("manual intervention is required for %s", file)
 
-    The first 4 letters of the barcode are the project name. If no barcode
-    is found, it will use the name 'other'.
-    """
-    file = os.path.abspath(file)
+        # store the original file name
+        orig_file = os.path.join(self._manual_dir,
+                                 cleaned_name + '.origlabfilename')
+        with create_open(orig_file) as f:
+            f.write(name)
 
-    try:
-        project = extract_barcode(file)[:5]
-        name = generate_openbis_name(file)
-    except ValueError:
-        name = clean_filename(file)
-        project = 'other'
+        write_checksum(dest)
 
-    dest = os.path.join(storage_dir, project, name)
-
-    try:
-        os.mkdir(os.path.join(storage_dir, project))
-    except FileExistsError:
-        pass
-
-    recursive_link(file, dest, tmpdir=tmpdir, perms=perms)
-    write_checksum(dest)
-
-
-def to_manual(file, manual_dir, tmpdir=None, perms=None):
-    """ Copy this file or directory to the directory for manual intervention"""
-    file = os.path.abspath(file)
-
-    cleaned_name = clean_filename(file)
-    dest = os.path.join(manual_dir, cleaned_name)
-    recursive_link(file, dest, tmpdir=tmpdir, perms=perms)
-    logger.info("manual intervention is required for %s", file)
-    write_checksum(dest)
-
-
-def make_links(file, openbis_dir, manual_dir, storage_dir,
-               tmpdir=None, perms=None):
-    """ Figure out to which dirs file should be linked. """
-    file = os.path.abspath(file)
-
-    logger.debug("processing file " + str(file))
-
-    if perms is not None:
-        check_permissions(file, **perms)
-
-    try:
-        to_openbis(file, openbis_dir, tmpdir=tmpdir, perms=perms)
-        to_storage(file, storage_dir, tmpdir=tmpdir, perms=perms)
-    except ValueError:
-        to_manual(file, manual_dir, tmpdir=tmpdir, perms=perms)
-
-    logger.debug("Removing original file %s", file)
-    try:
-        if os.path.isfile(file):
-            os.unlink(file)
-        elif os.path.isdir(file):
-            shutil.rmtree(str(file))
+    def to_msconvert(self, file, beat_timeout=30):
+        future = fscall.submit(self._msconvert_dir, [file],
+                               beat_timeout=beat_timeout)
+        try:
+            res = future.result()  # TODO add timeout
+        except BaseException:
+            message_to_admin('hi')
+            #future.cancel()
+            raise
         else:
-            logger.error(
-                "Could not remove file, it is not a regular file: %s", file
+            try:
+                print(res)
+                self.make_links(res)
+                #future.clean()
+            except BaseException:
+                message_to_admin('blubb')
+                raise
+
+    def make_links(self, file):
+        """ Figure out to which dirs file should be linked. """
+        try:
+            file = os.path.abspath(file)
+
+            logger.debug("processing file " + str(file))
+
+            if self._perms is not None:
+                check_permissions(file, **self._perms)
+
+            try:
+                self.to_openbis(file)
+                self.to_storage(file)
+            except ValueError:
+                self.to_manual(file)
+
+            logger.debug("Removing original file %s", file)
+            try:  # TODO this is a race condition!!!
+                if os.path.isfile(file):
+                    os.unlink(file)
+                elif os.path.isdir(file):
+                    shutil.rmtree(str(file))
+                else:
+                    logger.error("Could not remove file, it is not a " +
+                                 "regular file: %s", file)
+            except Exception:
+                logger.error("Could not remove original file %s after " +
+                             "handeling the file correctly", file)
+                raise
+        except BaseException:
+            incoming, filename = os.path.split(file)
+            error_marker = os.path.join(
+                incoming,
+                ERROR_MARKER + filename
             )
-    except Exception:
-        logger.error("Could not remove file %s", file)
-        raise
+            logger.exception("An error occured while handeling file. " +
+                             "Creating error marker file %s, remove if " +
+                             "you fixed the error. Error was:",
+                             error_marker)
+            with open(error_marker, 'w') as f:
+                traceback.print_exc(file=f)
 
 
-def listen(interval, incoming, openbis, manual, storage,
-           tmpdir=None, perms=None):
+def listen(interval, executor, incoming, target_dirs, tmpdir=None, perms=None):
     """ Listen for tasks in ``path``.
 
     Check for a marker file in ``path`` every ``interval`` seconds. If new
@@ -448,6 +500,8 @@ def listen(interval, incoming, openbis, manual, storage,
                     raise ValueError("Got bare marker file: %s" % marker)
 
                 logger.info("New file arrived: %s", file)
+                logger.debug("Removing marker for file %s", file)
+                os.unlink(marker)
 
                 if (filename.startswith(FINISHED_MARKER) or
                         filename.startswith(ERROR_MARKER)):
@@ -457,25 +511,15 @@ def listen(interval, incoming, openbis, manual, storage,
                     raise ValueError("Marker %s, but %s does not exist" %
                                      (marker, file))
 
-                make_links(
-                    file,
-                    openbis_dir=openbis,
-                    manual_dir=manual,
-                    storage_dir=storage,
-                    tmpdir=tmpdir,
-                    perms=perms,
-                )
+                handler = FileHandler(target_dirs, tmpdir, perms)
+                executor.submit(handler.make_links, file)
 
-                logger.debug("Finished processing file. Removing marker")
-                os.unlink(marker)
-
-                logger.info("Finished processing file %s", filename)
-            except Exception:
+            except BaseException:
                 error_marker = os.path.join(
                     incoming,
                     ERROR_MARKER + filename
                 )
-                logger.exception("An error occured while moving files. " +
+                logger.exception("An error occured while submitting job. " +
                                  "Creating error marker file %s, remove if " +
                                  "you fixed the error. Error was:",
                                  error_marker)
@@ -516,7 +560,7 @@ def parse_args():
                         help="Print a example config file to stdout.",
                         action="store_true", default=False)
     parser.add_argument('-t', help="interval [s] between checks for " +
-                        "new files", type=int, dest='interval')
+                        "new files", type=float, dest='interval')
     parser.add_argument('--no-permissions', dest='permissions',
                         help="do not set and check permissions of input " +
                         "and output files", action='store_false')
@@ -570,7 +614,7 @@ def merge_configuration(args, config, defaults):
     cleaned_config['paths'] = {}
     for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
         if not config.has_option("paths", name):
-            error_exit("Section 'paths' must include '%s'" % name)
+            error_exit("Section 'paths' must contain '%s'" % name)
         cleaned_config['paths'][name] = os.path.expanduser(
             config.get('paths', name)
         )
@@ -584,7 +628,7 @@ def merge_configuration(args, config, defaults):
 
         for name in ['interval']:
             if config.has_option('options', name):
-                cleaned_config[name] = config.getint('options', name)
+                cleaned_config[name] = config.getfloat('options', name)
 
         for name in ['filemode', 'dirmode', 'umask']:
             if config.has_option('options', name):
@@ -715,17 +759,23 @@ def main():
     check_configuration(args)
     init_logging(args)
 
-    perms = args['perms']
-
     try:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        listen_args = {
+            'interval': args['interval'],
+            'executor': executor,
+            'incoming': args['paths']['incoming'],
+            'target_dirs': args['paths'],
+            'tmpdir': args['paths']['tmpdir'],
+            'perms': args['perms'],
+        }
         # start checking for new files
         if args['daemon']:
-            daemonize(listen, args['pidfile'], args['umask'],
-                      args['interval'], perms=perms, **args['paths'])
+            daemonize(listen, args['pidfile'], args['umask'], **listen_args)
         else:
             init_signal_handler()
             os.umask(args['umask'])
-            listen(args['interval'], perms=perms, **args['paths'])
+            listen(**listen_args)
 
     except Exception:
         logging.critical("Daemon is shutting down for unknown reasons")
