@@ -19,6 +19,7 @@ setup(
     version='1.3.0',
     author='Adrian Seyboldt',
     author_email='adrian.seyboldt@web.de',
+    url="https://github.com/qbicsoftware/dropboxhandler",
     packages=['dropboxhandler'],
     entry_points={
         'console_scripts':
