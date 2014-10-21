@@ -22,7 +22,7 @@ import traceback
 import stat
 import tempfile
 import concurrent.futures
-import fscall
+from . import fscall
 from os.path import join as pjoin
 try:
     import configparser

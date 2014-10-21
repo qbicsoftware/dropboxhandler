@@ -40,7 +40,7 @@ def listen(listendir, maxqueue=0, task_re=None, interval=2, stop_event=None,
                 continue
             if (dir / "START").exists():
                 try:
-                    with (dir / "STARTED").open('x'):
+                    with (dir / "STARTED").open('w'):
                         pass
                 except FileExistsError:
                     continue
@@ -150,7 +150,7 @@ class FSRequest(object):
 
     def _write_file(self, filename, message):
         try:
-            with (self._dir / filename).open('w') as f:
+            with (self._dir / filename).open('x') as f:
                 if message is not None:
                     f.write(message)
         except (IOError, OSError) as f:

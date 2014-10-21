@@ -11,17 +11,19 @@ if sys.version_info < (3, 3):
 if sys.version_info < (3, 2):
     install_requires.append('futures')
 
+if sys.version_info < (3, 4):
+    install_requires.append('pathlib')
+
 setup(
     name='dropboxhandler',
-    version='1.2.0',
+    version='1.3.0',
     author='Adrian Seyboldt',
     author_email='adrian.seyboldt@web.de',
-    py_modules=['dropboxhandler', 'fscall'],
+    packages=['dropboxhandler'],
     entry_points={
         'console_scripts':
             ['dropboxhandler = dropboxhandler:main']
     },
-    data_files=[('', ['example.conf'])],
     description='Rename and sort incoming files from dropbox',
     install_requires=install_requires,
 )
