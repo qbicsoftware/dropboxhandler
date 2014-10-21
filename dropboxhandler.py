@@ -22,6 +22,7 @@ import traceback
 import stat
 import tempfile
 import concurrent.futures
+import fscall
 try:
     import configparser
 except ImportError:
@@ -332,6 +333,8 @@ class FileHandler():
         self._openbis_dir = target_dirs['openbis']
         self._storage_dir = target_dirs['storage']
         self._manual_dir = target_dirs['manual']
+        if 'msconvert' in target_dirs:
+            self._msconvert_dir = target_dirs['msconvert']
         self._tmpdir = tmpdir
         self._perms = perms
 
@@ -411,24 +414,23 @@ class FileHandler():
 
         write_checksum(dest)
 
-    def to_msconvert(self, file):
-        fscall = None
-        future = fscall.submit(self._msconvert_dir, [file])
-
-        def export_result(future):
+    def to_msconvert(self, file, beat_timeout=30):
+        future = fscall.submit(self._msconvert_dir, [file],
+                               beat_timeout=beat_timeout)
+        try:
+            res = future.result()  # TODO add timeout
+        except BaseException:
+            message_to_admin('hi')
+            #future.cancel()
+            raise
+        else:
             try:
-                res = future.result(timeout=self._msconvert_timeout)
+                print(res)
+                self.make_links(res)
+                #future.clean()
             except BaseException:
-                message_to_admin()
-                res.cancel()
-            else:
-                try:
-                    self.make_links(res)
-                    future.clean()
-                except BaseException:
-                    message_to_admin()
-
-        future.add_done_callback(export_result)
+                message_to_admin('blubb')
+                raise
 
     def make_links(self, file):
         """ Figure out to which dirs file should be linked. """

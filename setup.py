@@ -16,7 +16,7 @@ setup(
     version='1.2.0',
     author='Adrian Seyboldt',
     author_email='adrian.seyboldt@web.de',
-    py_modules=['dropboxhandler'],
+    py_modules=['dropboxhandler', 'fscall'],
     entry_points={
         'console_scripts':
             ['dropboxhandler = dropboxhandler:main']

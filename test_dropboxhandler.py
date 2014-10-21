@@ -15,6 +15,9 @@ import signal
 import time
 from os.path import join as pjoin
 from os.path import exists as pexists
+import fscall
+import threading
+import contextlib
 try:
     from unittest import mock
 except ImportError:
@@ -147,6 +150,62 @@ def test_to_storage_barcode(link, mkdir, chksum):
     )
 
 
+class TestFileHandler:
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        self.names = ['incoming', 'tmpdir', 'storage', 'manual', 'openbis',
+                      'msconvert']
+        self.paths = {}
+        for name in self.names:
+            self.paths[name] = pjoin(self.base, name)
+            os.mkdir(self.paths[name])
+
+    def tearDown(self):
+        print('tearDown')
+        shutil.rmtree(self.base)
+
+    @contextlib.contextmanager
+    def msconvert_server(self, server_func=None):
+        try:
+            self._stop_msconvert_server = threading.Event()
+            if server_func is None:
+                def server_func(request):
+                    with request.beat():
+                        (request.outdir / "data.mzml").touch()
+                        request.success('did nothing')
+
+            def run():
+                listener = fscall.listen(
+                    listendir=self.paths['msconvert'],
+                    interval=0.05,
+                    beat_interval=0.02,
+                    stop_event=self._stop_msconvert_server
+                )
+                for request in listener:
+                    server_func(request)
+
+            self._msconvert_thread = threading.Thread(target=run)
+            self._msconvert_thread.start()
+            print("started server")
+            yield
+        finally:
+            print("stopping server")
+            self._stop_msconvert_server.set()
+            self._msconvert_thread.join()
+            assert not self._msconvert_thread.is_alive()
+            print("server has stopped")
+
+    def test_msconvert_server(self):
+        handler = FileHandler(self.paths)
+        with self.msconvert_server():
+            name = pjoin(self.paths['incoming'], 'tmpfile')
+            with open(name, 'w') as f:
+                f.write('hi')
+            handler.to_msconvert(name, beat_timeout=2)
+            assert pexists(pjoin(self.paths['manual'], 'output', 'data.mzml'))
+
+
 class TestIntegration:
 
     def setUp(self):
@@ -174,7 +233,7 @@ class TestIntegration:
             f.write('umask = %s\n' % self.umask)
 
         self.logfile = pjoin(self.base, 'log')
-        subprocess.Popen(
+        subprocess.check_call(
             'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
             shell=True
         )
