@@ -10,8 +10,8 @@ import pwd
 import grp
 import subprocess
 import argparse
-import time
 import sys
+import time
 import shutil
 import logging
 import logging.config
@@ -23,6 +23,7 @@ import stat
 import tempfile
 import concurrent.futures
 import fscall
+from os.path import join as pjoin
 try:
     import configparser
 except ImportError:
@@ -36,6 +37,7 @@ logger = None
 BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
 FINISHED_MARKER = ".MARKER_is_finished_"
 ERROR_MARKER = "MARKER_error_"
+STARTED_MARKER = "MARKER_started_"
 
 
 # python 2.6 compat
@@ -96,8 +98,7 @@ def init_logging(options):
             print("Could not load logging information from config file", e,
                   file=sys.stderr)
 
-    name = options['paths']['incoming']
-    logger = logging.getLogger('dropboxhandler_' + name)
+    logger = logging.getLogger('dropboxhandler')
 
 
 def message_to_admin(message):
@@ -329,46 +330,75 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
 
 
 class FileHandler():
-    def __init__(self, target_dirs, tmpdir=None, perms=None):
-        self._openbis_dir = target_dirs['openbis']
+    """ Handle one incoming file.
+
+    Parameters
+    ----------
+    target_dirs: dict
+        A dictionary containing the paths to output directories. Must
+        have the keys `storage`, `manual` and optionally `msconvert`.
+    openbis_dropboxes: list
+        A list of pairs (regexp, path). Incoming files that contain
+        a valid QBiC barcode will be stored in the path with the first
+        matching regexp. If no regexp matches, throw an error.
+    tmpdir: path, optional
+        A basepath for temporary files. Must be on the same filesystem
+        as the source and target directories. Default is system
+        default temp directory.
+    perms: dict, optional
+        A dict with keys `userid`, `groupid`, `filemode` and `dirmode`.
+        Input files that do not match these will throw an error.
+    """
+    def __init__(self, target_dirs, openbis_dropboxes, tmpdir=None, perms=None):
         self._storage_dir = target_dirs['storage']
         self._manual_dir = target_dirs['manual']
         if 'msconvert' in target_dirs:
             self._msconvert_dir = target_dirs['msconvert']
         self._tmpdir = tmpdir
         self._perms = perms
+        self._openbis_dropboxes = openbis_dropboxes
+
+    def _find_openbin_dest(self, name):
+        for regexp in self._openbis_dropboxes:
+            path = self._openbis_dropboxes[regexp]
+            if re.match(regexp, name):
+                logger.debug("file %s matches regex %s", name, regexp)
+                return os.path.join(path, name)
+        logger.error("File with barcode, but does not match " +
+                     "an openbis dropbox: %s", name)
+        raise ValueError('No known openbis dropbox for file %s' % name)
 
     def to_openbis(self, file):
-        """ Copy this file or directory to the openbis export directory
+        """ Sort this file or directory to the openbis dropboxes.
 
         If the filename does not include an openbis barcode, raise ValueError.
-
         file, openbis_dir and tmpdir must all be on the same file system.
-
-
-        TODO:
-        - add checksum file
+        Two additional files will be created: `{name}.origlabfilename`,
+        that contains the original name of the file; and `{}.sha256sum`, that
+        contains a checksum of the new file or directory.
         """
         file = os.path.abspath(file)
 
         base, orig_name = os.path.split(file)
 
-        if os.path.isdir(file):
-            raise ValueError("Sending directories to openbis is not supported")
-
         openbis_name = generate_openbis_name(file)
-
         logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
-        dest = os.path.join(self._openbis_dir, openbis_name)
+
+        dest = self._find_openbin_dest(openbis_name)
+        dest_dir = os.path.split(dest)[0]
+        logger.info("Write file to openbis dropbox %s" % dest_dir)
+
         recursive_link(file, dest, tmpdir=self._tmpdir, perms=self._perms)
 
         labname_file = "%s.origlabfilename" % openbis_name
-        with create_open(os.path.join(self._openbis_dir, labname_file)) as f:
+        with create_open(os.path.join(dest_dir, labname_file)) as f:
             f.write(orig_name)
 
+        write_checksum(dest)
+
         # tell openbis that we are finished copying
-        for name in [openbis_name, labname_file]:
-            marker = os.path.join(self._openbis_dir, FINISHED_MARKER + name)
+        for name in [openbis_name]:
+            marker = os.path.join(dest_dir, FINISHED_MARKER + name)
             with create_open(marker):
                 pass
 
@@ -421,13 +451,12 @@ class FileHandler():
             res = future.result()  # TODO add timeout
         except BaseException:
             message_to_admin('hi')
-            #future.cancel()
+            # future.cancel()
             raise
         else:
             try:
-                print(res)
                 self.make_links(res)
-                #future.clean()
+                # future.clean()
             except BaseException:
                 message_to_admin('blubb')
                 raise
@@ -449,7 +478,7 @@ class FileHandler():
                 self.to_manual(file)
 
             logger.debug("Removing original file %s", file)
-            try:  # TODO this is a race condition!!!
+            try:
                 if os.path.isfile(file):
                     os.unlink(file)
                 elif os.path.isdir(file):
@@ -475,57 +504,81 @@ class FileHandler():
                 traceback.print_exc(file=f)
 
 
-def listen(interval, executor, incoming, target_dirs, tmpdir=None, perms=None):
-    """ Listen for tasks in ``path``.
+def check_dir(name, executor, incoming, target_dirs, openbis_dropboxes,
+              tmpdir=None, perms=None):
+    """ Check if there are new files in `incoming` and handle them if so.
 
-    Check for a marker file in ``path`` every ``interval`` seconds. If new
-    files are found, check their permissions, write their checksums to
-    ``checksums.txt`` and sort them into apropriate subdirs.
+    Check for a marker file in `incoming`. If new files are found, check
+    their permissions, write their checksums to ``checksums.txt`` and sort them
+    into apropriate subdirs.
     """
-    logger.info("Starting to listen in %s", incoming)
-    os.chdir(str(incoming))
-    while True:
-        for marker in glob.glob(FINISHED_MARKER + '*'):
-            logging.debug("Found new marker file: %s", marker)
-            filename = marker[len(FINISHED_MARKER):]
-            file = os.path.abspath(filename)
+    logger.debug("Check for new files in %s at %s" % (name, incoming))
+    for marker in glob.glob(pjoin(incoming, FINISHED_MARKER + '*')):
+        marker = os.path.split(marker)[1]
+        logging.debug("Found new marker file: %s", marker)
+        filename = marker[len(FINISHED_MARKER):]
+        file = pjoin(incoming, filename)
 
-            if os.path.exists(ERROR_MARKER + filename):
-                logger.debug("Ignoring file %s because of error marker",
-                             file)
-                continue
+        if os.path.exists(pjoin(incoming, ERROR_MARKER + filename)):
+            logger.debug("Ignoring file %s because of error marker", file)
+            continue
 
-            try:
-                if not filename:
-                    raise ValueError("Got bare marker file: %s" % marker)
+        if os.path.exists(pjoin(incoming, STARTED_MARKER + filename)):
+            logger.debug("Ignoring file %s because of started marker", file)
+            continue
 
-                logger.info("New file arrived: %s", file)
-                logger.debug("Removing marker for file %s", file)
-                os.unlink(marker)
+        try:
+            if not filename:
+                raise ValueError("Got bare marker file: %s" % marker)
 
-                if (filename.startswith(FINISHED_MARKER) or
-                        filename.startswith(ERROR_MARKER)):
-                    raise ValueError("Filename starts with marker name")
+            logger.info("New file arrived for dropbox %s: %s" % (name, file))
+            logger.debug("Removing marker for file %s", file)
+            os.unlink(pjoin(incoming, marker))
 
-                if not os.path.exists(file):
-                    raise ValueError("Marker %s, but %s does not exist" %
-                                     (marker, file))
+            if (filename.startswith(FINISHED_MARKER) or
+                    filename.startswith(ERROR_MARKER)):
+                raise ValueError("Filename starts with marker name")
 
-                handler = FileHandler(target_dirs, tmpdir, perms)
-                executor.submit(handler.make_links, file)
+            if not os.path.exists(file):
+                raise ValueError("Marker %s, but %s does not exist" %
+                                 (marker, file))
 
-            except BaseException:
-                error_marker = os.path.join(
-                    incoming,
-                    ERROR_MARKER + filename
-                )
-                logger.exception("An error occured while submitting job. " +
-                                 "Creating error marker file %s, remove if " +
-                                 "you fixed the error. Error was:",
-                                 error_marker)
-                with open(error_marker, 'w') as f:
-                    traceback.print_exc(file=f)
-        time.sleep(interval)
+            with open(pjoin(incoming, STARTED_MARKER + filename), 'w'):
+                pass
+
+            handler = FileHandler(target_dirs, openbis_dropboxes, tmpdir, perms)
+            future = executor.submit(handler.make_links, file)
+
+            def remove_started_marker(fut):
+                try:
+                    os.unlink(pjoin(incoming, STARTED_MARKER + filename))
+                except IOError:
+                    pass
+            future.add_done_callback(remove_started_marker)
+
+        except BaseException:
+            error_marker = pjoin(
+                incoming,
+                ERROR_MARKER + filename
+            )
+            logger.exception("An error occured while submitting job. " +
+                             "Creating error marker file %s, remove if " +
+                             "you fixed the error. Error was:",
+                             error_marker)
+            with open(error_marker, 'w') as f:
+                traceback.print_exc(file=f)
+
+
+
+def listen(incomings, interval, target_dirs, openbis_dropboxes,
+           tmpdir=None, perms=None, maxtasks=3):
+    """ Watch directories `incomings` for new files and start FileHandler."""
+    with concurrent.futures.ThreadPoolExecutor(maxtasks) as executor:
+        while True:
+            for name in incomings:
+                check_dir(name, executor, incomings[name], target_dirs,
+                          openbis_dropboxes, tmpdir=None, perms=None)
+            time.sleep(interval)
 
 
 def error_exit(message):
@@ -598,8 +651,12 @@ def parse_args():
     config = configparser.ConfigParser()
     config.read([args.conf_file])
 
-    if not config.has_section('paths'):
-        error_exit("Config file must include section 'paths'")
+    if not config.has_section('incoming'):
+        error_exit("Config file must include section 'incoming'")
+    if not config.has_section('outgoing'):
+        error_exit("Config file must include section 'outgoing'")
+    if not config.has_section('openbis'):
+        error_exit("Config file must include section 'openbis'")
 
     return merge_configuration(vars(args), config, defaults)
 
@@ -611,15 +668,13 @@ def merge_configuration(args, config, defaults):
             cleaned_args[key] = args[key]
 
     cleaned_config = {}
-    cleaned_config['paths'] = {}
-    for name in ["incoming", "openbis", "storage", "manual", "tmpdir"]:
-        if not config.has_option("paths", name):
+    cleaned_config['outgoing'] = {}
+    for name in ["storage", "manual", "tmpdir"]:
+        if not config.has_option("outgoing", name):
             error_exit("Section 'paths' must contain '%s'" % name)
-        cleaned_config['paths'][name] = os.path.expanduser(
-            config.get('paths', name)
+        cleaned_config['outgoing'][name] = os.path.expanduser(
+            config.get('outgoing', name)
         )
-    if config.has_option('paths', 'pidfile'):
-        cleaned_config['pidfile'] = config.get('paths', 'pidfile')
 
     if config.has_section('options'):
         for name in ['permissions', 'checksum', 'daemon']:
@@ -634,9 +689,14 @@ def merge_configuration(args, config, defaults):
             if config.has_option('options', name):
                 cleaned_config[name] = int(config.get('options', name), base=8)
 
-        for name in ['user', 'group']:
+        for name in ['user', 'group', 'pidfile']:
             if config.has_option('options', name):
                 cleaned_config[name] = config.get('options', name)
+
+    cleaned_config['incoming'] = dict(config.items('incoming'))
+    cleaned_config['openbis'] = {}
+    for regexp, path in config.items('openbis'):
+        cleaned_config['openbis'][regexp.strip("'" + '"')] = path
 
     cleaned_config['use_conf_file_logging'] = config.has_section('logging')
 
@@ -649,10 +709,11 @@ def merge_configuration(args, config, defaults):
 
 def check_configuration(options):
     """ Sanity checks for directories. """
-    for name in options['paths']:
-        path = options['paths'][name]
-        if not os.path.isdir(path):
-            error_exit("%s is not a directory: %s" % (name, path))
+    for section in ['outgoing', 'incoming', 'openbis']:
+        for name in options[section]:
+            path = options[section][name]
+            if not os.path.isdir(path):
+                error_exit("%s is not a directory: %s" % (name, path))
 
     if options['interval'] <= 0:
         error_exit("Invalid interval: " + options['interval'])
@@ -725,7 +786,6 @@ def daemonize(func, pidfile, umask, *args, **kwargs):
     write_pidfile(pidfile)
     close_open_fds()
     init_signal_handler()
-
     try:
         func(*args, **kwargs)
     except Exception:
@@ -758,16 +818,14 @@ def main():
     args = parse_args()
     check_configuration(args)
     init_logging(args)
-
     try:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
         listen_args = {
             'interval': args['interval'],
-            'executor': executor,
-            'incoming': args['paths']['incoming'],
-            'target_dirs': args['paths'],
-            'tmpdir': args['paths']['tmpdir'],
+            'incomings': args['incoming'],
+            'target_dirs': args['outgoing'],
+            'tmpdir': args['outgoing']['tmpdir'],
             'perms': args['perms'],
+            'openbis_dropboxes': args['openbis'],
         }
         # start checking for new files
         if args['daemon']:

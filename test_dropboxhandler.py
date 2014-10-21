@@ -125,9 +125,9 @@ def test_recursive_link():
 @mock.patch('os.mkdir')
 @mock.patch('dropboxhandler.recursive_link')
 def test_to_storage(link, mkdir, chksum):
-    target_dirs = {'manual': None, 'openbis': None,
-                   'storage': '/tmp/storagedir'}
-    handler = FileHandler(target_dirs)
+    target_dirs = {'manual': None, 'storage': '/tmp/storagedir'}
+    openbis_dropboxes = {'^\w*.raw$': '/tmp/openbis'}
+    handler = FileHandler(target_dirs, openbis_dropboxes)
     handler.to_storage('/tmp/bob.txt')
     mkdir.assert_called_with('/tmp/storagedir/other')
     link.assert_called_with('/tmp/bob.txt', '/tmp/storagedir/other/bob.txt',
@@ -138,9 +138,9 @@ def test_to_storage(link, mkdir, chksum):
 @mock.patch('os.mkdir')
 @mock.patch('dropboxhandler.recursive_link')
 def test_to_storage_barcode(link, mkdir, chksum):
-    target_dirs = {'manual': None, 'openbis': None,
-                   'storage': '/tmp/storagedir'}
-    handler = FileHandler(target_dirs)
+    target_dirs = {'manual': None, 'storage': '/tmp/storagedir'}
+    openbis_dropboxes = {'^\w*.raw$': '/tmp/openbis'}
+    handler = FileHandler(target_dirs, openbis_dropboxes)
     handler.to_storage('/tmp/QJFDC010EUää.txt')
     mkdir.assert_called_with('/tmp/storagedir/QJFDC')
     link.assert_called_with(
@@ -154,12 +154,11 @@ class TestFileHandler:
 
     def setUp(self):
         self.base = tempfile.mkdtemp()
-        self.names = ['incoming', 'tmpdir', 'storage', 'manual', 'openbis',
-                      'msconvert']
-        self.paths = {}
-        for name in self.names:
-            self.paths[name] = pjoin(self.base, name)
-            os.mkdir(self.paths[name])
+        self.outgoing_names = ['storage', 'manual', 'msconvert', 'incoming']
+        self.outgoing = {}
+        for name in self.outgoing_names:
+            self.outgoing[name] = pjoin(self.base, name)
+            os.mkdir(self.outgoing[name])
 
     def tearDown(self):
         print('tearDown')
@@ -177,7 +176,7 @@ class TestFileHandler:
 
             def run():
                 listener = fscall.listen(
-                    listendir=self.paths['msconvert'],
+                    listendir=self.outgoing['msconvert'],
                     interval=0.05,
                     beat_interval=0.02,
                     stop_event=self._stop_msconvert_server
@@ -197,20 +196,21 @@ class TestFileHandler:
             print("server has stopped")
 
     def test_msconvert_server(self):
-        handler = FileHandler(self.paths)
+        handler = FileHandler(self.outgoing, None)
         with self.msconvert_server():
-            name = pjoin(self.paths['incoming'], 'tmpfile')
+            name = pjoin(self.outgoing['incoming'], 'tmpfile')
             with open(name, 'w') as f:
                 f.write('hi')
             handler.to_msconvert(name, beat_timeout=2)
-            assert pexists(pjoin(self.paths['manual'], 'output', 'data.mzml'))
+            assert pexists(pjoin(self.outgoing['manual'],
+                                 'output', 'data.mzml'))
 
 
 class TestIntegration:
 
     def setUp(self):
         self.base = tempfile.mkdtemp()
-        self.names = ['incoming', 'tmpdir', 'storage', 'manual', 'openbis']
+        self.names = ['incoming', 'tmpdir', 'storage', 'manual', 'openbis_raw']
         self.paths = {}
         for name in self.names:
             self.paths[name] = os.path.join(self.base, name)
@@ -221,12 +221,18 @@ class TestIntegration:
         self.umask = '0o077'
         os.umask(int(self.umask, 8))
         with open(self.conf, 'w') as f:
-            f.write("[paths]\n")
-            for name in self.names:
+            f.write("[incoming]\n")
+            f.write("incoming1 = %s\n\n" % self.paths['incoming'])
+
+            f.write("[outgoing]\n")
+            for name in ['storage', 'manual', 'tmpdir']:
                 f.write("%s = %s\n" % (name, self.paths[name]))
-            f.write('pidfile = %s\n' % self.pidfile)
+
+            f.write("\n[openbis]\n")
+            f.write('"%s" = %s\n' % ("^\w*.raw$", self.paths['openbis_raw']))
 
             f.write('[options]\n')
+            f.write('pidfile = %s\n' % self.pidfile)
             f.write('interval = .03\n')
             f.write('filemode = 0o600\n')
             f.write('dirmode = 0o700\n')
@@ -234,12 +240,17 @@ class TestIntegration:
 
         self.logfile = pjoin(self.base, 'log')
         subprocess.check_call(
-            'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
+            'dropboxhandler -c %s -d --logfile %s --loglevel DEBUG' %
+            (self.conf, self.logfile),
             shell=True
         )
         time.sleep(.1)
+        assert os.path.exists(self.pidfile)
 
     def tearDown(self):
+        with open(self.logfile, 'r') as f:
+            print(f.read())
+
         with open(self.pidfile) as f:
             pid = int(f.read())
 
@@ -323,22 +334,18 @@ class TestIntegration:
     def test_openbis(self):
         self._send_file("äää  \t({QJFDC066BI.RAw")
         expected_name = 'QJFDC066BI_QJFDC066BI.raw'
-        assert pexists(pjoin(self.paths['openbis'], expected_name))
+        assert pexists(pjoin(self.paths['openbis_raw'], expected_name))
         marker = '.MARKER_is_finished_' + expected_name
-        assert pexists(pjoin(self.paths['openbis'], marker))
+        assert pexists(pjoin(self.paths['openbis_raw'], marker))
 
         origname_file = pjoin(
-            self.paths['openbis'], expected_name + '.origlabfilename'
+            self.paths['openbis_raw'], expected_name + '.origlabfilename'
         )
         assert pexists(origname_file)
         with open(origname_file, 'r') as f:
             assert f.read() == "äää  \t({QJFDC066BI.RAw"
-        assert pexists(pjoin(
-            self.paths['openbis'],
-            '.MARKER_is_finished_' + expected_name + '.origlabfilename'
-        ))
 
     def test_storage(self):
-        self._send_file('hi_barcode:QJFDC066BI.mzml')
+        self._send_file('hi_barcode:QJFDC066BI.raw')
         assert pexists(pjoin(self.paths['storage'], 'QJFDC',
-                             'QJFDC066BI_hi_barcodeQJFDC066BI.mzml'))
+                             'QJFDC066BI_hi_barcodeQJFDC066BI.raw'))
