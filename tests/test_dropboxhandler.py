@@ -7,6 +7,7 @@ from dropboxhandler import (
     FileHandler, fscall, print_example_config,
 )
 from nose.tools import raises
+import nose
 import tempfile
 import subprocess
 import os
@@ -18,7 +19,6 @@ from os.path import join as pjoin
 from os.path import exists as pexists
 import threading
 import contextlib
-import unittest
 try:
     from unittest import mock
 except ImportError:
@@ -196,9 +196,9 @@ class TestFileHandler:
             self._msconvert_thread.join()
             assert not self._msconvert_thread.is_alive()
 
-    @unittest.skipIf(sys.version_info < (3, 3),
-                     "No python2 support for msconvert")
     def test_msconvert_server(self):
+        if sys.version_info < (3, 3):
+            raise nose.SkipTest("no python2 support for msconvert")
         handler = FileHandler(self.outgoing, None)
         with self.msconvert_server():
             name = pjoin(self.outgoing['incoming'], 'tmpfile')
