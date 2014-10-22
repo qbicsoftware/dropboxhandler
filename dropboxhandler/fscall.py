@@ -40,7 +40,7 @@ def listen(listendir, maxqueue=0, task_re=None, interval=2, stop_event=None,
                 continue
             if (dir / "START").exists():
                 try:
-                    with (dir / "STARTED").open('w'):
+                    with (dir / "STARTED").open('x'):
                         pass
                 except FileExistsError:
                     continue

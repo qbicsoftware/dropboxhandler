@@ -52,7 +52,7 @@ def test_barcode_two_barcodes_eq():
 def test_generate_openbis_name():
     path = "uiaenrtd_{()=> \tQJFDC010EU_gtä.raw"
     assert (generate_openbis_name(path) ==
-            "QJFDC010EU_uiaenrtd_QJFDC010EU_gt.raw")
+            "QJFDC010EU_uiaenrtd__gt.raw")
 
 
 def test_is_valid_barcode():
@@ -122,34 +122,6 @@ def test_recursive_link():
     shutil.rmtree(base)
 
 
-@mock.patch('dropboxhandler.dropboxhandler.write_checksum')
-@mock.patch('os.mkdir')
-@mock.patch('dropboxhandler.dropboxhandler.recursive_link')
-def test_to_storage(link, mkdir, chksum):
-    target_dirs = {'manual': None, 'storage': '/tmp/storagedir'}
-    openbis_dropboxes = {'^\w*.raw$': '/tmp/openbis'}
-    handler = FileHandler(target_dirs, openbis_dropboxes)
-    handler.to_storage('/tmp/bob.txt')
-    mkdir.assert_called_with('/tmp/storagedir/other')
-    link.assert_called_with('/tmp/bob.txt', '/tmp/storagedir/other/bob.txt',
-                            tmpdir=None, perms=None)
-
-
-@mock.patch('dropboxhandler.dropboxhandler.write_checksum')
-@mock.patch('os.mkdir')
-@mock.patch('dropboxhandler.dropboxhandler.recursive_link')
-def test_to_storage_barcode(link, mkdir, chksum):
-    target_dirs = {'manual': None, 'storage': '/tmp/storagedir'}
-    openbis_dropboxes = {'^\w*.raw$': '/tmp/openbis'}
-    handler = FileHandler(target_dirs, openbis_dropboxes)
-    handler.to_storage('/tmp/QJFDC010EUää.txt')
-    mkdir.assert_called_with('/tmp/storagedir/QJFDC')
-    link.assert_called_with(
-        '/tmp/QJFDC010EUää.txt',
-        '/tmp/storagedir/QJFDC/QJFDC010EU_QJFDC010EU.txt',
-        tmpdir=None, perms=None
-    )
-
 
 def test_example_file():
     print_example_config()
@@ -159,14 +131,49 @@ class TestFileHandler:
 
     def setUp(self):
         self.base = tempfile.mkdtemp()
-        self.outgoing_names = ['storage', 'manual', 'msconvert', 'incoming']
-        self.outgoing = {}
-        for name in self.outgoing_names:
-            self.outgoing[name] = pjoin(self.base, name)
-            os.mkdir(self.outgoing[name])
+        self.dir_names = ['storage', 'manual', 'msconvert', 'tmpdir',
+                          'openbis_raw', 'openbis_mzml', 'incoming']
+        self.paths = {}
+        for name in self.dir_names:
+            self.paths[name] = pjoin(self.base, name)
+            os.mkdir(self.paths[name])
+
+        self.perms = None
+        self.openbis_dropboxes = [('^\w*.raw$', self.paths['openbis_raw']),
+                                  ('^\w*.mzml$', self.paths['openbis_mzml'])]
+        self.handler = FileHandler(self.openbis_dropboxes, perms=self.perms,
+                                   storage=self.paths['storage'],
+                                   manual=self.paths['manual'],
+                                   msconvert=self.paths['msconvert'],
+                                   tmpdir=self.paths['tmpdir'])
 
     def tearDown(self):
+        self.handler.shutdown(wait=True)
         shutil.rmtree(self.base)
+
+    @mock.patch('dropboxhandler.dropboxhandler.write_checksum')
+    @mock.patch('os.mkdir')
+    @mock.patch('dropboxhandler.dropboxhandler.recursive_link')
+    def test_to_storage(self, link, mkdir, chksum):
+        self.handler.to_storage('/tmp/bob.txt')
+        mkdir.assert_called_with(pjoin(self.paths['storage'], 'other'))
+        link.assert_called_with(
+            '/tmp/bob.txt',
+            os.path.join(self.paths['storage'], 'other', 'bob.txt'),
+            tmpdir=self.paths['tmpdir'], perms=self.perms
+        )
+
+    @mock.patch('dropboxhandler.dropboxhandler.write_checksum')
+    @mock.patch('os.mkdir')
+    @mock.patch('dropboxhandler.dropboxhandler.recursive_link')
+    def test_to_storage_barcode(self, link, mkdir, chksum):
+        self.handler.to_storage('/tmp/QJFDC010EUääa.txt')
+        mkdir.assert_called_with(pjoin(self.paths['storage'], 'QJFDC'))
+        link.assert_called_with(
+            '/tmp/QJFDC010EUääa.txt',
+            pjoin(self.paths['storage'], 'QJFDC', 'QJFDC010EU_a.txt'),
+            tmpdir=self.paths['tmpdir'], perms=self.perms
+        )
 
     @contextlib.contextmanager
     def msconvert_server(self, server_func=None):
@@ -180,7 +187,7 @@ class TestFileHandler:
 
             def run():
                 listener = fscall.listen(
-                    listendir=self.outgoing['msconvert'],
+                    listendir=self.paths['msconvert'],
                     interval=0.05,
                     beat_interval=0.02,
                     stop_event=self._stop_msconvert_server
@@ -199,13 +206,13 @@ class TestFileHandler:
     def test_msconvert_server(self):
         if sys.version_info < (3, 3):
             raise nose.SkipTest("no python2 support for msconvert")
-        handler = FileHandler(self.outgoing, None)
         with self.msconvert_server():
-            name = pjoin(self.outgoing['incoming'], 'tmpfile')
+            name = pjoin(self.paths['incoming'], 'tmpfile')
             with open(name, 'w') as f:
                 f.write('hi')
-            handler.to_msconvert(name, beat_timeout=2)
-            assert pexists(pjoin(self.outgoing['manual'],
+            self.handler.to_msconvert(name, beat_timeout=2)
+            print(os.listdir(self.paths['manual']))
+            assert pexists(pjoin(self.paths['manual'],
                                  'output', 'data.mzml'))
 
 
@@ -248,6 +255,8 @@ class TestIntegration:
             shell=True
         )
         time.sleep(.1)
+        with open(self.logfile) as f:
+            print(f.read())
         assert os.path.exists(self.pidfile)
 
     def tearDown(self):
@@ -335,8 +344,8 @@ class TestIntegration:
         assert os.stat(outpath).st_mode & int(self.umask, 8) == 0
 
     def test_openbis(self):
-        self._send_file("äää  \t({QJFDC066BI.RAw")
-        expected_name = 'QJFDC066BI_QJFDC066BI.raw'
+        self._send_file("äää  \t({QJFDC066BIblub.RAw")
+        expected_name = 'QJFDC066BI_blub.raw'
         assert pexists(pjoin(self.paths['openbis_raw'], expected_name))
         marker = '.MARKER_is_finished_' + expected_name
         assert pexists(pjoin(self.paths['openbis_raw'], marker))
@@ -346,9 +355,9 @@ class TestIntegration:
         )
         assert pexists(origname_file)
         with open(origname_file, 'r') as f:
-            assert f.read() == "äää  \t({QJFDC066BI.RAw"
+            assert f.read() == "äää  \t({QJFDC066BIblub.RAw"
 
     def test_storage(self):
         self._send_file('hi_barcode:QJFDC066BI.raw')
         assert pexists(pjoin(self.paths['storage'], 'QJFDC',
-                             'QJFDC066BI_hi_barcodeQJFDC066BI.raw'))
+                             'QJFDC066BI_hi_barcode.raw'))
