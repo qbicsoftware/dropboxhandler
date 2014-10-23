@@ -14,7 +14,6 @@ import sys
 import time
 import shutil
 import logging
-import logging.config
 import atexit
 import signal
 import glob
@@ -26,6 +25,11 @@ import yaml
 import numbers
 from . import fscall
 from os.path import join as pjoin
+try:
+    import logging.config
+except ImportError:
+    from . import _logging_config
+    logging.config = _logging_config
 
 if not hasattr(__builtins__, 'FileExistsError'):
     FileExistsError = OSError
