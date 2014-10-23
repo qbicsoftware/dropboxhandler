@@ -495,13 +495,18 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         filename = os.path.split(path)[1]
         future = super(FileHandler, self).submit(self._handle_file, path)
 
-        def remove_start_marker(future):
-            error_marker = os.path.join(basedir, STARTED_MARKER + filename)
+        def remove_markers(future):
+            started_marker = os.path.join(basedir, STARTED_MARKER + filename)
+            finish_marker = os.path.join(basedir, FINISHED_MARKER + filename)
             try:
-                os.unlink(error_marker)
+                os.unlink(started_marker)
             except OSError:
-                logger.warn("Could not find start marker for file %s", path)
-        future.add_done_callback(remove_start_marker)
+                logger.error("Could not find start marker for file %s", path)
+            try:
+                os.unlink(finish_marker)
+            except OSError:
+                logger.error("Could not find finish marker for file %s", path)
+        future.add_done_callback(remove_markers)
         return future
 
 
@@ -555,8 +560,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
 
         touch(start_marker)
         handler.submit(file, basedir, perms)
-        # handler will remove start_marker
-        os.unlink(finish_marker)
+        # handler will remove start_marker and finish marker
     except BaseException:
         logger.exception("An error occured while submitting a job. " +
                          "Creating error marker file %s, remove if " +
@@ -609,6 +613,9 @@ def parse_args():
                         action="store_true", default=False)
     parser.add_argument('-d', '--daemon', action='store_true', default=None)
     parser.add_argument('--pidfile', default=None)
+    parser.add_argument('--check-config', default=False, action='store_true',
+                        help="Do not start the daemon, but check the " +
+                        "config file")
 
     args = parser.parse_args()
 
@@ -636,6 +643,7 @@ def parse_args():
         config['options']['pidfile'] = args.pidfile
     if args.daemon is not None:
         config['options']['daemon'] = args.daemon
+    config['check_config'] = args.check_config
 
     return config
 
@@ -806,6 +814,9 @@ def close_open_fds():
 def main():
     args = parse_args()
     check_configuration(args)
+    if args['check_config']:
+        print('Config file seems fine.')
+        sys.exit(0)
     init_logging(args['logging'])
     try:
         handler_args = {

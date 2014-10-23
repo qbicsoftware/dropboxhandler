@@ -21,10 +21,6 @@ from os.path import exists as pexists
 import threading
 import contextlib
 try:
-    from dropboxhandler import fscall
-except ImportError:
-    fscall = False
-try:
     from unittest import mock
 except ImportError:
     import mock
