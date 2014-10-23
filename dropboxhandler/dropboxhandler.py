@@ -716,7 +716,7 @@ def check_incoming(conf):
         if 'name' not in section:
             error_exit("Missing key 'name' in section 'incoming'")
         if 'perms' in section:
-            _check_permission_config(conf[section])
+            _check_permission_config(section['perms'])
 
 
 def check_openbis(config):

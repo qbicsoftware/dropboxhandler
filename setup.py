@@ -25,5 +25,6 @@ setup(
             ['dropboxhandler = dropboxhandler:main']
     },
     description='Rename and sort incoming files from dropbox',
+    package_data={'dropboxhandler': ['config.yaml']},
     install_requires=install_requires,
 )
