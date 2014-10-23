@@ -20,9 +20,10 @@ from os.path import join as pjoin
 from os.path import exists as pexists
 import threading
 import contextlib
+import logging.config
 try:
-    import logging.config
-except ImportError:
+    logging.config.dictConfig
+except AttributeError:
     from . import _logging_config
     logging.config = _logging_config
 try:
