@@ -26,11 +26,6 @@ import yaml
 import numbers
 from . import fscall
 from os.path import join as pjoin
-try:
-    logging.config.dictConfig
-except AttributeError:
-    from . import _logging_config
-    logging.config = _logging_config
 
 if not hasattr(__builtins__, 'FileExistsError'):
     FileExistsError = OSError
@@ -43,27 +38,6 @@ BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
 FINISHED_MARKER = ".MARKER_is_finished_"
 ERROR_MARKER = "MARKER_error_"
 STARTED_MARKER = "MARKER_started_"
-
-
-# python 2.6 compat
-if not hasattr(subprocess, 'check_output'):
-    def check_output(*args, **kwargs):
-        kwargs['stdout'] = subprocess.PIPE
-        try:
-            proc = subprocess.Popen(*args, **kwargs)
-            stdout, stderr = proc.communicate()
-        except:
-            proc.kill()
-            proc.wait()
-            raise
-        retcode = proc.poll()
-        if retcode:
-            raise subprocess.CalledProcessError(
-                retcode, list(args[0])
-            )
-        return stdout
-
-    subprocess.check_output = check_output
 
 
 # python2 does not allow open(..., mode='x')
