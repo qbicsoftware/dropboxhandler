@@ -21,6 +21,10 @@ from os.path import exists as pexists
 import threading
 import contextlib
 try:
+    from dropboxhandler import fscall
+except ImportError:
+    fscall = False
+try:
     from unittest import mock
 except ImportError:
     import mock
@@ -226,6 +230,8 @@ class TestFileHandler:
             assert not self._msconvert_thread.is_alive()
 
     def test_msconvert_server(self):
+        if not fscall:
+            raise nose.SkipTest("pathlib is not installed")
         if sys.version_info < (3, 3):
             raise nose.SkipTest("no python2 support for msconvert")
         with self.msconvert_server():

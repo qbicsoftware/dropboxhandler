@@ -24,8 +24,12 @@ import tempfile
 import concurrent.futures
 import yaml
 import numbers
-from . import fscall
 from os.path import join as pjoin
+
+try:
+    from . import fscall
+except ImportError:
+    fscall = False
 
 if not hasattr(__builtins__, 'FileExistsError'):
     FileExistsError = OSError
@@ -425,6 +429,8 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         write_checksum(dest)
 
     def to_msconvert(self, file, beat_timeout=30):
+        if not fscall:
+            raise ValueError("msconvert need pathlib, which is not installed")
         future = fscall.submit(self._msconvert_dir, [file],
                                beat_timeout=beat_timeout)
         try:

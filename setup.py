@@ -13,9 +13,6 @@ if sys.version_info < (3, 3):
 if sys.version_info < (3, 2):
     install_requires.append('futures')
 
-if sys.version_info < (3, 4):
-    install_requires.append('pathlib')
-
 setup(
     name='dropboxhandler',
     version='1.3.0',
