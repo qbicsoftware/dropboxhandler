@@ -15,17 +15,40 @@ import sys
 import shutil
 import signal
 import time
+import yaml
 from os.path import join as pjoin
 from os.path import exists as pexists
 import threading
 import contextlib
+import logging.config
 try:
     from unittest import mock
 except ImportError:
     import mock
 
-init_logging({'loglevel': 'DEBUG', 'use_conf_file_logging': False,
-              'paths': {'incoming': '/path/to/incoming'}})
+logging_config = {
+    'version': 1,
+    'loggers': {
+        '': {
+            'level': 'DEBUG',
+            'handlers': ['default'],
+            'propagate': True
+        },
+        'dropboxhandler': {
+            'level': 'DEBUG',
+            'handlers': ['default'],
+            'propagate': False,
+        }
+    },
+    'handlers': {
+        'default': {
+            'class': 'logging.StreamHandler',
+            'level': 'DEBUG',
+            'stream': 'ext://sys.stdout',
+        },
+    },
+}
+init_logging(logging_config)
 
 
 @raises(ValueError)
@@ -51,8 +74,7 @@ def test_barcode_two_barcodes_eq():
 
 def test_generate_openbis_name():
     path = "uiaenrtd_{()=> \tQJFDC010EU_gtä.raw"
-    assert (generate_openbis_name(path) ==
-            "QJFDC010EU_uiaenrtd__gt.raw")
+    assert (generate_openbis_name(path) == "QJFDC010EU_uiaenrtd__gt.raw")
 
 
 def test_is_valid_barcode():
@@ -122,7 +144,6 @@ def test_recursive_link():
     shutil.rmtree(base)
 
 
-
 def test_example_file():
     print_example_config()
 
@@ -139,9 +160,11 @@ class TestFileHandler:
             os.mkdir(self.paths[name])
 
         self.perms = None
-        self.openbis_dropboxes = [('^\w*.raw$', self.paths['openbis_raw']),
-                                  ('^\w*.mzml$', self.paths['openbis_mzml'])]
-        self.handler = FileHandler(self.openbis_dropboxes, perms=self.perms,
+        self.openbis_dropboxes = [
+            {'regexp': '^\w*.raw$', 'path': self.paths['openbis_raw']},
+            {'regexp': '^\w*.mzml$', 'path': self.paths['openbis_mzml']}
+        ]
+        self.handler = FileHandler(self.openbis_dropboxes,
                                    storage=self.paths['storage'],
                                    manual=self.paths['manual'],
                                    msconvert=self.paths['msconvert'],
@@ -155,24 +178,24 @@ class TestFileHandler:
     @mock.patch('os.mkdir')
     @mock.patch('dropboxhandler.dropboxhandler.recursive_link')
     def test_to_storage(self, link, mkdir, chksum):
-        self.handler.to_storage('/tmp/bob.txt')
+        self.handler.to_storage('/tmp/bob.txt', perms=self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'other'))
         link.assert_called_with(
             '/tmp/bob.txt',
             os.path.join(self.paths['storage'], 'other', 'bob.txt'),
-            tmpdir=self.paths['tmpdir'], perms=self.perms
+            tmpdir=self.paths['tmpdir'], perms=self.perms,
         )
 
     @mock.patch('dropboxhandler.dropboxhandler.write_checksum')
     @mock.patch('os.mkdir')
     @mock.patch('dropboxhandler.dropboxhandler.recursive_link')
     def test_to_storage_barcode(self, link, mkdir, chksum):
-        self.handler.to_storage('/tmp/QJFDC010EUääa.txt')
+        self.handler.to_storage('/tmp/QJFDC010EUääa.txt', self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'QJFDC'))
         link.assert_called_with(
             '/tmp/QJFDC010EUääa.txt',
             pjoin(self.paths['storage'], 'QJFDC', 'QJFDC010EU_a.txt'),
-            tmpdir=self.paths['tmpdir'], perms=self.perms
+            tmpdir=self.paths['tmpdir'], perms=self.perms,
         )
 
     @contextlib.contextmanager
@@ -220,38 +243,57 @@ class TestIntegration:
 
     def setUp(self):
         self.base = tempfile.mkdtemp()
-        self.names = ['incoming', 'tmpdir', 'storage', 'manual', 'openbis_raw']
+        self.names = ['incoming', 'tmpdir', 'storage', 'manual',
+                      'openbis_raw', 'openbis_mzml']
         self.paths = {}
         for name in self.names:
             self.paths[name] = os.path.join(self.base, name)
             os.mkdir(self.paths[name])
 
         self.pidfile = pjoin(self.base, 'pidfile')
-        self.conf = os.path.join(self.base, 'dropbox.conf')
-        self.umask = '0o077'
-        os.umask(int(self.umask, 8))
-        with open(self.conf, 'w') as f:
-            f.write("[incoming]\n")
-            f.write("incoming1 = %s\n\n" % self.paths['incoming'])
-
-            f.write("[outgoing]\n")
-            for name in ['storage', 'manual', 'tmpdir']:
-                f.write("%s = %s\n" % (name, self.paths[name]))
-
-            f.write("\n[openbis]\n")
-            f.write('"%s" = %s\n' % ("^\w*.raw$", self.paths['openbis_raw']))
-
-            f.write('[options]\n')
-            f.write('pidfile = %s\n' % self.pidfile)
-            f.write('interval = .03\n')
-            f.write('filemode = 0o600\n')
-            f.write('dirmode = 0o700\n')
-            f.write('umask = %s\n' % self.umask)
-
         self.logfile = pjoin(self.base, 'log')
+        self.conf = os.path.join(self.base, 'dropbox.conf')
+        self.umask = 0o077
+        os.umask(self.umask)
+        with open(self.conf, 'w') as f:
+            config = {
+                'options': {
+                    'permission': True,
+                    'checksum': True,
+                    'interval': .05,
+                    'pidfile': self.pidfile,
+                    'umask': self.umask,
+                },
+                'incoming': [
+                    {'name': 'incoming1', 'path': self.paths['incoming']}
+                ],
+                'outgoing': {
+                    'manual': self.paths['manual'],
+                    'storage': self.paths['storage'],
+                    'tmpdir': self.paths['tmpdir'],
+                },
+                'openbis': [
+                    {'regexp': "^\w*.raw$", 'path': self.paths['openbis_raw']},
+                    {'regexp': "^\w*.mzml$",
+                     'path': self.paths['openbis_mzml']},
+                ],
+                'logging': {
+                    'version': 1,
+                    'root': {'level': 'NOTSET',
+                             'handlers': ['file']},
+                    'handlers': {
+                        'file': {
+                            'class': 'logging.FileHandler',
+                            'level': 'DEBUG',
+                            'filename': self.logfile,
+                        },
+                    },
+                },
+            }
+            yaml.dump(config, f)
+
         subprocess.check_call(
-            'dropboxhandler -c %s -d --logfile %s --loglevel DEBUG' %
-            (self.conf, self.logfile),
+            'dropboxhandler -c %s -d' % self.conf,
             shell=True
         )
         time.sleep(.1)
@@ -276,7 +318,7 @@ class TestIntegration:
     @raises(subprocess.CalledProcessError)
     def test_running(self):
         subprocess.check_call(
-            'dropboxhandler -c %s -d --logfile %s' % (self.conf, self.logfile),
+            'dropboxhandler -c %s -d' % self.conf,
             shell=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE
         )
 
@@ -341,7 +383,7 @@ class TestIntegration:
         assert pexists(outpath)
         assert os.path.isdir(outpath)
         assert pexists(pjoin(outpath, 'file1'))
-        assert os.stat(outpath).st_mode & int(self.umask, 8) == 0
+        assert os.stat(outpath).st_mode & self.umask == 0
 
     def test_openbis(self):
         self._send_file("äää  \t({QJFDC066BIblub.RAw")

@@ -22,15 +22,15 @@ import traceback
 import stat
 import tempfile
 import concurrent.futures
+import yaml
+import numbers
 from . import fscall
 from os.path import join as pjoin
-try:
-    import configparser
-except ImportError:
-    import ConfigParser as configparser
 
 if not hasattr(__builtins__, 'FileExistsError'):
     FileExistsError = OSError
+if not hasattr(__builtins__, 'FileNotFoundError'):
+    FileNotFoundError = OSError
 
 logger = None
 
@@ -92,24 +92,11 @@ def is_old(path):
 def init_logging(options):
     global logger
 
-    if 'logfile' in options:
-        logging.basicConfig(
-            level=getattr(logging, options['loglevel']),
-            filename=options['logfile'],
-        )
-    else:
-        logging.basicConfig(
-            level=getattr(logging, options['loglevel']),
-            stream=sys.stdout,
-        )
-
-    if options['use_conf_file_logging']:
-        try:
-            logging.config.fileConfig(options['conf_file'],
-                                      disable_existing_loggers=True)
-        except Exception as e:
-            print("Could not load logging information from config file", e,
-                  file=sys.stderr)
+    try:
+        logging.config.dictConfig(options)
+    except Exception as e:
+        traceback.print_exc()
+        error_exit("Could not load logging information from config: %s " % e)
 
     logger = logging.getLogger('dropboxhandler')
 
@@ -364,18 +351,17 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
     """
 
     def __init__(self, openbis_dropboxes, storage, manual,
-                 msconvert=None, tmpdir=None, perms=None, max_workers=5):
+                 msconvert=None, tmpdir=None, max_workers=5, checksum=True):
         super(FileHandler, self).__init__(max_workers)
         self._openbis_dropboxes = openbis_dropboxes
         self._storage_dir = storage
         self._manual_dir = manual
         self._msconvert_dir = msconvert
         self._tmpdir = tmpdir
-        self._perms = perms
 
     def _find_openbis_dest(self, name):
-        for regexp in self._openbis_dropboxes:
-            path = self._openbis_dropboxes[regexp]
+        for conf in self._openbis_dropboxes:
+            regexp, path = conf['regexp'], conf['path']
             if re.match(regexp, name):
                 logger.debug("file %s matches regex %s", name, regexp)
                 return os.path.join(path, name)
@@ -383,7 +369,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
                      "an openbis dropbox: %s", name)
         raise ValueError('No known openbis dropbox for file %s' % name)
 
-    def to_openbis(self, file):
+    def to_openbis(self, file, perms=None):
         """ Sort this file or directory to the openbis dropboxes.
 
         If the filename does not include an openbis barcode, raise ValueError.
@@ -403,7 +389,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         dest_dir = os.path.split(dest)[0]
         logger.info("Write file to openbis dropbox %s" % dest_dir)
 
-        recursive_link(file, dest, tmpdir=self._tmpdir, perms=self._perms)
+        recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
 
         labname_file = "%s.origlabfilename" % openbis_name
         with create_open(os.path.join(dest_dir, labname_file)) as f:
@@ -417,7 +403,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             with create_open(marker):
                 pass
 
-    def to_storage(self, file):
+    def to_storage(self, file, perms=None):
         """Store file in a subdir of storage_dir with the name of the project.
 
         The first 4 letters of the barcode are the project name. If no barcode
@@ -439,16 +425,16 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         except FileExistsError:
             pass
 
-        recursive_link(file, dest, tmpdir=self._tmpdir, perms=self._perms)
+        recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
         write_checksum(dest)
 
-    def to_manual(self, file):
+    def to_manual(self, file, perms=None):
         """ Copy this file to the directory for manual intervention"""
         file = os.path.abspath(file)
         base, name = os.path.split(file)
         cleaned_name = clean_filename(file)
         dest = os.path.join(self._manual_dir, cleaned_name)
-        recursive_link(file, dest, tmpdir=self._tmpdir, perms=self._perms)
+        recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
         logger.info("manual intervention is required for %s", dest)
 
         # store the original file name
@@ -478,15 +464,15 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
                 message_to_admin('blubb')
                 raise
 
-    def _handle_file(self, file):
+    def _handle_file(self, file, perms=None):
         """ Figure out to which dirs file should be linked. """
         try:
             file = os.path.abspath(file)
 
             logger.debug("processing file " + str(file))
 
-            if self._perms is not None:
-                check_permissions(file, **self._perms)
+            if perms is not None:
+                check_permissions(file, **perms)
 
             try:
                 self.to_openbis(file)
@@ -520,7 +506,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             with open(error_marker, 'w') as f:
                 traceback.print_exc(file=f)
 
-    def submit(self, path, basedir):
+    def submit(self, path, basedir, perms=None):
         filename = os.path.split(path)[1]
         future = super(FileHandler, self).submit(self._handle_file, path)
 
@@ -534,7 +520,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         return future
 
 
-def process_marker(marker, basedir, incoming_name, handler):
+def process_marker(marker, basedir, incoming_name, handler, perms=None):
     """ Check if there are new files in `incoming` and handle them if so.
 
     Check for a marker file in `incoming`. If new files are found, check
@@ -583,7 +569,7 @@ def process_marker(marker, basedir, incoming_name, handler):
                              (finish_marker, file))
 
         touch(start_marker)
-        handler.submit(file, basedir)
+        handler.submit(file, basedir, perms)
         # handler will remove start_marker
         os.unlink(finish_marker)
     except BaseException:
@@ -595,15 +581,17 @@ def process_marker(marker, basedir, incoming_name, handler):
             traceback.print_exc(file=f)
 
 
-def listen(incoming_dirs, interval, handler):
+def listen(incoming, interval, handler):
     """ Watch directories `incomings` for new files and call FileHandler."""
     while True:
-        for name in incoming_dirs:
-            basedir = incoming_dirs[name]
+        for conf in incoming:
+            basedir = conf['path']
+            name = conf['name']
+            perms = conf.get('perms', None)
 
             logger.debug("Check for new files in %s at %s" % (name, basedir))
             for marker in glob.glob(pjoin(basedir, FINISHED_MARKER + '*')):
-                process_marker(marker, basedir, name, handler)
+                process_marker(marker, basedir, name, handler, perms)
         time.sleep(interval)
 
 
@@ -614,22 +602,18 @@ def error_exit(message):
 
 def parse_args():
     """ Read arguments from config file and command line args."""
-    defaults = {
+    options_default = {
         'permissions': True,
         'checksum': True,
         'interval': 60,
         'pidfile': '~/.dropboxhandler.pid',
         'daemon': False,
-        'user': None,
-        'group': None,
-        'filemode': 0o660,
-        'dirmode': 0o770,
         'umask': 0o077,
     }
 
     parser = argparse.ArgumentParser(
-        description="Watch for new files in " +
-                    "dropboxdir and move to ObenBis/storage",
+        description="Listen for new files in " +
+                    "dropboxdirs and move to ObenBis/storage",
     )
 
     parser.add_argument("-c", "--conf-file",
@@ -638,29 +622,8 @@ def parse_args():
     parser.add_argument("--print-example-config",
                         help="Print a example config file to stdout.",
                         action="store_true", default=False)
-    parser.add_argument('-t', help="interval [s] between checks for " +
-                        "new files", type=float, dest='interval')
-    parser.add_argument('--no-permissions', dest='permissions',
-                        help="do not set and check permissions of input " +
-                        "and output files", action='store_false')
-    parser.add_argument('--logfile', default=None)
-    parser.add_argument('--loglevel', default='INFO')
-    parser.add_argument('-d', '--daemon', action='store_true')
+    parser.add_argument('-d', '--daemon', action='store_true', default=None)
     parser.add_argument('--pidfile', default=None)
-    parser.add_argument('--no-checksum', dest='checksum',
-                        help="Do not compute checksums for incoming files",
-                        action="store_false")
-    parser.add_argument('--user', default=None,
-                        help="Owner of incoming and outgoing files")
-    parser.add_argument('--group', default=None,
-                        help="Group owner of incoming and outgoing files ")
-    parser.add_argument('--filemode', default=None,
-                        help="permissions of all incoming and outgoing file " +
-                        "(e.g. '0o660')")
-    parser.add_argument('--dirmode', default=None,
-                        help="permissons of all incoming and outgoing dirs")
-    parser.add_argument('--umask', default=None,
-                        help="Set umask in the same format at filemode")
 
     args = parser.parse_args()
 
@@ -668,114 +631,130 @@ def parse_args():
         print_example_config()
         sys.exit(0)
 
-    # read config file
-    if not os.path.exists(args.conf_file):
-        print("Could not find config file (default location: " +
-              "~/.dropboxhandler.conf", file=sys.stderr)
-        sys.exit(1)
+    try:
+        with open(args.conf_file) as f:
+            config = yaml.load(f)
+    except FileNotFoundError:
+        error_exit("Could not find config file (default location: " +
+                   "~/.dropboxhandler.conf")
+    except yaml.parser.ParserError as e:
+        error_exit("Could not parse config file. Error was %s" % e)
 
-    config = configparser.ConfigParser()
-    config.read([args.conf_file])
+    for key in ['incoming', 'outgoing', 'openbis', 'options']:
+        if key not in config:
+            error_exit("Config file must include section '%s'" % key)
 
-    if not config.has_section('incoming'):
-        error_exit("Config file must include section 'incoming'")
-    if not config.has_section('outgoing'):
-        error_exit("Config file must include section 'outgoing'")
-    if not config.has_section('openbis'):
-        error_exit("Config file must include section 'openbis'")
-    if not config.has_section('options'):
-        error_exit("Config file must include section 'options'")
+    options_default.update(config['options'])
+    config['options'] = options_default
 
-    return merge_configuration(vars(args), config, defaults)
+    if args.pidfile is not None:
+        config['options']['pidfile'] = args.pidfile
+    if args.daemon is not None:
+        config['options']['daemon'] = args.daemon
 
-
-def merge_configuration(args, config, defaults):
-    cleaned_args = {}
-    for key in args:
-        if args[key] is not None:
-            cleaned_args[key] = args[key]
-
-    cleaned_config = {}
-    cleaned_config['outgoing'] = {}
-    for name in ["storage", "manual", "tmpdir"]:
-        if not config.has_option("outgoing", name):
-            error_exit("Section 'outgoing' must contain '%s'" % name)
-        cleaned_config['outgoing'][name] = os.path.expanduser(
-            config.get('outgoing', name)
-        )
-
-    for name in ['permissions', 'checksum', 'daemon']:
-        if config.has_option('options', name):
-            cleaned_config[name] = config.getboolean('options', name)
-
-    for name in ['interval']:
-        if config.has_option('options', name):
-            cleaned_config[name] = config.getfloat('options', name)
-
-    for name in ['filemode', 'dirmode', 'umask']:
-        if config.has_option('options', name):
-            cleaned_config[name] = int(config.get('options', name), base=8)
-
-    for name in ['user', 'group', 'pidfile']:
-        if config.has_option('options', name):
-            cleaned_config[name] = config.get('options', name)
-
-    cleaned_config['incoming'] = dict(config.items('incoming'))
-    cleaned_config['openbis'] = {}
-    for regexp, path in config.items('openbis'):
-        cleaned_config['openbis'][regexp.strip("'" + '"')] = path
-
-    cleaned_config['use_conf_file_logging'] = config.has_section('logging')
-
-    defaults.update(cleaned_config)
-    defaults.update(cleaned_args)
-    defaults['pidfile'] = os.path.expanduser(defaults['pidfile'])
-    defaults['pidfile'] = os.path.abspath(defaults['pidfile'])
-    return defaults
+    return config
 
 
-def check_configuration(options):
-    """ Sanity checks for directories. """
-    for section in ['outgoing', 'incoming', 'openbis']:
-        for name in options[section]:
-            path = options[section][name]
-            if not os.path.isdir(path):
-                error_exit("%s is not a directory: %s" % (name, path))
+def check_options(options):
+    for key in options:
+        if key == 'permissions' and options[key] not in [True, False]:
+            error_exit("Invalid value for 'permissions' in section 'options'")
+        elif key == 'checksum' and options[key] not in [True, False]:
+            error_exit("Invalid value for 'checksum' in section 'options'")
+        elif key == 'interval' and not isinstance(options[key], numbers.Real):
+            error_exit("Invalid value for 'interval' in section 'options'")
+            if options[key] <= 0:
+                error_exit("'interval' in section 'options' must be positive")
+        elif key == 'pidfile' and not os.path.isabs(options[key]):
+            error_exit("Invalid value for 'pidfile' in section 'options'")
+        elif key == 'pidfile' and os.path.exists(options[key]):
+            error_exit("pidfile exists. Is the daemon already running?")
+        elif key == 'umask' and not isinstance(options[key], int):
+            error_exit("Invalid value for 'umask' in section 'options'")
+        elif key == 'daemon' and options[key] not in [True, False]:
+            error_exit("Invalid value for 'daemon' in section 'options'")
 
-    if options['interval'] <= 0:
-        error_exit("Invalid interval: " + options['interval'])
 
-    if options['daemon'] and os.path.exists(options['pidfile']):
-        error_exit("Pidfile %s exists. Is another daemon unning?" %
-                   options['pidfile'])
+def check_outgoing(conf):
+    for key in conf:
+        if key not in ['manual', 'storage', 'tmpdir', 'msconvert']:
+            error_exit("Invalid path for key %s in section 'outgoing'" % key)
+        if not os.path.isabs(conf[key]):
+            error_exit("Path in config section 'outgoing' is not absolute: %s"
+                       % conf[key])
+        if not os.path.isdir(conf[key]):
+            error_exit("Path in config is not a directory: %s" % conf[key])
 
-    if options['permissions']:
-        perms = {}
-        if options['user'] is None:
-            perms['userid'] = os.geteuid()
+
+def _user_to_uid(user):
+    try:
+        return pwd.getpwnam(user).pw_uid
+    except KeyError:
+        error_exit("Invalid user name: %s" % user)
+
+
+def _group_to_gid(group):
+    try:
+        return grp.getgrnam(group).gr_gid
+    except KeyError:
+        error_exit("Invalid group name: %s" % group)
+
+
+def _check_permission_config(conf):
+    for key in conf:
+        if key == 'user':
+            conf[key] = _user_to_uid(conf[key])
+        elif key == 'group':
+            conf[key] = _group_to_gid(conf[key])
+        elif key in ['filemode', 'dirmode']:
+            if not isinstance(conf[key], int):
+                error_exit("Invalid value for key %s in section " +
+                           "'incoming'" % key)
         else:
-            try:
-                perms['userid'] = pwd.getpwnam(options['user']).pw_uid
-            except KeyError:
-                error_exit("User '%s' does not exist." % options['user'])
+            error_exit("Unknown key '%s' in section 'incoming'" % key)
 
-        if options['group'] is None:
-            perms['groupid'] = os.getegid()
-        else:
-            try:
-                perms['groupid'] = grp.getgrnam(options['group']).gr_gid
-            except KeyError:
-                error_exit("Group '%s' does not exist." % options['group'])
 
-        perms['filemode'] = options['filemode']
-        perms['dirmode'] = options['dirmode']
-        options['perms'] = perms
-    else:
-        options['perms'] = None
+def check_incoming(conf):
+    if not isinstance(conf, list):
+        error_exit("Config section 'incoming' is not a list")
+    for section in conf:
+        if 'path' not in section:
+            error_exit("Missing key 'path' in section 'incoming'")
+        if 'name' not in section:
+            error_exit("Missing key 'name' in section 'incoming'")
+        if 'perms' in section:
+            _check_permission_config(conf[section])
+
+
+def check_openbis(config):
+    if not isinstance(config, list):
+        error_exit("Config section 'openbis' is not a list")
+    for conf in config:
+        for key in conf:
+            if key == 'regexp':
+                try:
+                    re.compile(conf[key])
+                except re.error:
+                    error_exit("Invalid regular expression: %s" % conf[key])
+            elif key == 'path':
+                if not os.path.isdir(conf[key]):
+                    error_exit("Not a directory: %s" % conf[key])
+                if not os.path.isabs(conf[key]):
+                    error_exit("Not an absolute path: %s" % conf[key])
+            else:
+                error_exit("Unexpected option %s in section 'openbis'" % key)
+
+
+def check_configuration(config):
+    """ Sanity checks for configuration. """
+    check_options(config['options'])
+    check_outgoing(config['outgoing'])
+    check_incoming(config['incoming'])
+    check_openbis(config['openbis'])
 
 
 def print_example_config():
-    config_path = os.path.join(os.path.dirname(__file__), 'example.conf')
+    config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
     with open(config_path) as f:
         print(f.read())
 
@@ -821,8 +800,6 @@ def daemonize(func, pidfile, umask, *args, **kwargs):
 
 
 def write_pidfile(pidfile):
-    pidfile = os.path.expanduser(str(pidfile))
-
     try:
         with create_open(pidfile) as f:
             f.write(str(os.getpid()) + '\n')
@@ -844,25 +821,27 @@ def close_open_fds():
 def main():
     args = parse_args()
     check_configuration(args)
-    init_logging(args)
+    init_logging(args['logging'])
     try:
         handler_args = {
-            'perms': args['perms'],
             'openbis_dropboxes': args['openbis'],
+            'checksum': args['options']['checksum'],
         }
         handler_args.update(args['outgoing'])
         with FileHandler(**handler_args) as handler:
             listen_args = {
-                'incoming_dirs': args['incoming'],
-                'interval': args['interval'],
+                'incoming': args['incoming'],
+                'interval': args['options']['interval'],
                 'handler': handler,
             }
-            if args['daemon']:
+            if args['options']['daemon']:
                 daemonize(
-                    listen, args['pidfile'], args['umask'], **listen_args)
+                    listen, args['options']['pidfile'],
+                    args['options']['umask'], **listen_args
+                )
             else:
                 init_signal_handler()
-                os.umask(args['umask'])
+                os.umask(args['options']['umask'])
                 listen(**listen_args)
 
     except Exception:

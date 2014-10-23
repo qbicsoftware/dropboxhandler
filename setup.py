@@ -1,7 +1,7 @@
 from setuptools import setup
 import sys
 
-install_requires = []
+install_requires = ['PyYAML']
 if sys.version_info < (2, 7):
     install_requires.append("argparse")
 
