@@ -173,9 +173,9 @@ class TestFileHandler:
         self.handler.shutdown(wait=True)
         shutil.rmtree(self.base)
 
-    @mock.patch('dropboxhandler.dropboxhandler.write_checksum')
+    @mock.patch('dropboxhandler.fstools.write_checksum')
     @mock.patch('os.mkdir')
-    @mock.patch('dropboxhandler.dropboxhandler.recursive_link')
+    @mock.patch('dropboxhandler.fstools.recursive_link')
     def test_to_storage(self, link, mkdir, chksum):
         self.handler.to_storage('/tmp/bob.txt', perms=self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'other'))
@@ -185,9 +185,9 @@ class TestFileHandler:
             tmpdir=self.paths['tmpdir'], perms=self.perms,
         )
 
-    @mock.patch('dropboxhandler.dropboxhandler.write_checksum')
+    @mock.patch('dropboxhandler.fstools.write_checksum')
     @mock.patch('os.mkdir')
-    @mock.patch('dropboxhandler.dropboxhandler.recursive_link')
+    @mock.patch('dropboxhandler.fstools.recursive_link')
     def test_to_storage_barcode(self, link, mkdir, chksum):
         self.handler.to_storage('/tmp/QJFDC010EUääa.txt', self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'QJFDC'))

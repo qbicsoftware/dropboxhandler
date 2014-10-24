@@ -4,27 +4,17 @@
 from __future__ import print_function
 
 import re
-import string
 import os
-import pwd
-import grp
-import subprocess
-import argparse
-import sys
 import time
 import shutil
 import logging
 import logging.config
-import atexit
-import signal
 import glob
 import traceback
-import stat
-import tempfile
 import concurrent.futures
-import yaml
-import numbers
 from os.path import join as pjoin
+
+from . import fstools
 
 try:
     from . import fscall
@@ -36,7 +26,7 @@ if not hasattr(__builtins__, 'FileExistsError'):
 if not hasattr(__builtins__, 'FileNotFoundError'):
     FileNotFoundError = OSError
 
-logger = None
+logger = logging.getLogger('dropboxhandler')
 
 BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
 FINISHED_MARKER = ".MARKER_is_finished_"
@@ -44,93 +34,8 @@ ERROR_MARKER = "MARKER_error_"
 STARTED_MARKER = "MARKER_started_"
 
 
-# python2 does not allow open(..., mode='x')
-def create_open(path):
-    if sys.version_info < (3, 3):
-        fd = os.open(path, os.O_CREAT | os.O_NOFOLLOW | os.O_WRONLY)
-        try:
-            file = os.fdopen(fd, 'w')
-        except OSError:
-            os.close(fd)
-            raise
-        else:
-            return file
-    else:
-        return open(path, mode='x')
-
-
-def touch(path):
-    with create_open(path):
-        pass
-
-
-def is_old(path):
-    """ Test if path has been modified during the last 5 days. """
-    modified = os.stat(path).st_mtime
-    age_seconds = time.time() - modified
-    if age_seconds > 60 * 60 * 24 * 5:  # 5 days
-        return True
-
-
-def init_logging(options):
-    global logger
-
-    try:
-        logging.config.dictConfig(options)
-    except Exception as e:
-        traceback.print_exc()
-        error_exit("Could not load logging information from config: %s " % e)
-
-    logger = logging.getLogger('dropboxhandler')
-
-
 def message_to_admin(message):
     pass
-
-
-def write_checksum(file):
-    """ Compute checksums of file or of contents if it is a dir.
-
-    Checksums will be written to <inputfile>.sha256 in the
-    format of the sha256sum tool.
-
-    If file is a directory, the checksum file will include the
-    checksums of all files in that dir.
-    """
-    file = os.path.abspath(file)
-    basedir = os.path.split(file)[0]
-    checksum_file = str(file) + '.sha256'
-
-    files = subprocess.check_output(
-        [
-            'find',
-            os.path.basename(file),
-            '-type', 'f',
-            '-print0'
-        ],
-        cwd=basedir,
-    ).split(b'\0')[:-1]
-
-    if not files:
-        raise ValueError("%s has no files to checksum" % file)
-
-    try:
-        with open(checksum_file, 'wb') as f:
-            for file in files:
-                csum_line = subprocess.check_output(
-                    ['sha256sum', '-b', '--', file],
-                    cwd=basedir,
-                )
-                csum = csum_line.split()[0]
-                base, ext = os.path.splitext(file)
-
-                if not len(csum) == 64:
-                    raise ValueError('Could not parse sha256sum output')
-
-                f.write(csum_line)
-    except OSError:
-        logging.exception('Could not write checksum file. Does it exist?')
-        raise
 
 
 def is_valid_barcode(barcode):
@@ -164,20 +69,6 @@ def extract_barcode(path):
     return barcodes[0]
 
 
-def clean_filename(path):
-    """ Generate a sane (alphanumeric) filename for path. """
-    allowed_chars = string.ascii_letters + string.digits + '_'
-    stem, suffix = os.path.splitext(os.path.basename(path))
-    cleaned_stem = ''.join(i for i in stem if i in allowed_chars)
-    if not cleaned_stem:
-        raise ValueError("Invalid file name: %s", stem + suffix)
-
-    if not all(i in allowed_chars + '.' for i in suffix):
-        raise ValueError("Bad file suffix: " + suffix)
-
-    return cleaned_stem + suffix.lower()
-
-
 def generate_openbis_name(path):
     """ Generate a sane file name from the input file
 
@@ -193,122 +84,8 @@ def generate_openbis_name(path):
     """
     barcode = extract_barcode(path)
     path = path.replace(barcode, "")
-    cleaned_name = clean_filename(path)
+    cleaned_name = fstools.clean_filename(path)
     return barcode + '_' + cleaned_name
-
-
-def _check_perms(path, userid, groupid, dirmode, filemode):
-    if userid and os.stat(path).st_uid != userid:
-        raise ValueError("userid of file %s should be %s but is %s" %
-                         (path, userid, os.stat(path).st_uid))
-    if groupid and os.stat(path).st_gid != groupid:
-        raise ValueError("groupid of file %s should be %s but is %s" %
-                         (path, groupid, os.stat(path).st_gid))
-
-    if os.path.isdir(path):
-        if os.stat(path).st_mode % 0o1000 != dirmode:
-            raise ValueError("mode of dir %s should be %o but is %o" %
-                             (path, dirmode, os.stat(path).st_mode % 0o1000))
-    elif os.path.islink(path):
-        raise ValueError("symbolic links are not allowed: %s" % path)
-    elif os.path.isfile(path):
-        if os.stat(path).st_mode % 0o1000 != filemode:
-            raise ValueError("mode of file %s should be %o but is %o" %
-                             (path, filemode, os.stat(path).st_mode % 0o1000))
-    else:
-        raise ValueError("should be a regular file or dir: %s" % path)
-
-
-def check_permissions(path, userid, groupid, dirmode, filemode):
-    """ Basic sanity check for permissions of file written by this daemon.
-
-    Raises ValueError, if permissions are not as specified, or for files
-    that are not regular files or directories.
-    """
-    _check_perms(path, userid, groupid, dirmode, filemode)
-    for path, dirnames, filenames in os.walk(path):
-        _check_perms(path, userid, groupid, dirmode, filemode)
-        for name in filenames:
-            _check_perms(os.path.join(path, name),
-                         userid, groupid, dirmode, filemode)
-
-
-def init_signal_handler():
-    def handler(sig, frame):
-        if sig == signal.SIGTERM:
-            logger.info("Daemon got SIGTERM. Shutting down.")
-            sys.exit(0)
-        elif sig == signal.SIGCONT:
-            logger.info("Daemon got SIGCONT. Continuing.")
-        elif sig == signal.SIGINT:
-            logger.info("Daemon got SIGINT. Shutting down.")
-            sys.exit(0)
-        else:
-            logger.error("Signal handler did not expect to get %s", sig)
-
-    signal.signal(signal.SIGTERM, handler)
-    signal.signal(signal.SIGCONT, handler)
-    signal.signal(signal.SIGINT, handler)
-
-
-def recursive_link(source, dest, tmpdir=None, perms=None):
-    source = os.path.abspath(source)
-    dest = os.path.abspath(dest)
-    if os.path.exists(dest):
-        raise ValueError("File exists: %s" % dest)
-    destbase, destname = os.path.split(dest)
-    if destname.startswith(FINISHED_MARKER):
-        logger.error("Can not copy to destination that looks like a marker")
-        raise ValueError("Illegal destination file: %s", dest)
-
-    tmpdir = tempfile.mkdtemp(dir=tmpdir)
-    workdest = os.path.join(tmpdir, destname)
-
-    logger.debug("Linking files in %s to workdir %s", source, workdest)
-
-    command = [
-        'cp',
-        '--link',
-        '--no-dereference',  # symbolic links could point anywhere
-        '--recursive',
-        '--no-clobber',
-        '--',
-        str(source),
-        str(workdest),
-    ]
-
-    try:
-        subprocess.check_call(command, shell=False)
-
-        # remove symlinks from output
-        # os.fwalk would be better, but not for py<3.3
-        for root, dirs, files in os.walk(workdest):
-            for file in dirs + files:
-                path = os.path.join(root, file)
-                stats = os.lstat(path)
-                if stat.S_IFMT(stats.st_mode) == stat.S_IFLNK:
-                    raise ValueError(
-                        "Symbolic links are not allowed. %s is a link to %s" %
-                        (path, os.readlink(path))
-                    )
-
-        if perms is not None:
-            logger.debug("Checking permissions: %s", perms)
-            check_permissions(workdest, **perms)
-
-        logger.debug("Created links in workdir. Moving to destination")
-        # TODO race condition
-        if os.path.exists((dest)):
-            raise ValueError("Destination exists: %s", dest)
-        os.rename(workdest, dest)
-    except:  # even for SystemExit
-        logger.error("Got exception before we finished copying files. " +
-                     "Rolling back changes")
-        if os.path.exists(dest):
-            shutil.rmtree(dest)
-        raise
-    finally:
-        shutil.rmtree(tmpdir)
 
 
 class FileHandler(concurrent.futures.ThreadPoolExecutor):
@@ -372,18 +149,18 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         dest_dir = os.path.split(dest)[0]
         logger.info("Write file to openbis dropbox %s" % dest_dir)
 
-        recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
+        fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
 
         labname_file = "%s.origlabfilename" % openbis_name
-        with create_open(os.path.join(dest_dir, labname_file)) as f:
+        with fstools.create_open(os.path.join(dest_dir, labname_file)) as f:
             f.write(orig_name)
 
-        write_checksum(dest)
+        fstools.write_checksum(dest)
 
         # tell openbis that we are finished copying
         for name in [openbis_name]:
             marker = os.path.join(dest_dir, FINISHED_MARKER + name)
-            with create_open(marker):
+            with fstools.create_open(marker):
                 pass
 
     def to_storage(self, file, perms=None):
@@ -399,7 +176,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             name = generate_openbis_name(file)
         except ValueError:
             project = 'other'
-            name = clean_filename(file)
+            name = fstools.clean_filename(file)
 
         dest = os.path.join(self._storage_dir, project, name)
 
@@ -408,25 +185,25 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         except FileExistsError:
             pass
 
-        recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
-        write_checksum(dest)
+        fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
+        fstools.write_checksum(dest)
 
     def to_manual(self, file, perms=None):
         """ Copy this file to the directory for manual intervention"""
         file = os.path.abspath(file)
         base, name = os.path.split(file)
-        cleaned_name = clean_filename(file)
+        cleaned_name = fstools.clean_filename(file)
         dest = os.path.join(self._manual_dir, cleaned_name)
-        recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
+        fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
         logger.info("manual intervention is required for %s", dest)
 
         # store the original file name
         orig_file = os.path.join(self._manual_dir,
                                  cleaned_name + '.origlabfilename')
-        with create_open(orig_file) as f:
+        with fstools.create_open(orig_file) as f:
             f.write(name)
 
-        write_checksum(dest)
+        fstools.write_checksum(dest)
 
     def to_msconvert(self, file, beat_timeout=30):
         if not fscall:
@@ -442,7 +219,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         else:
             try:
                 basepath, filename = os.path.split(res)
-                touch(os.path.join(basepath, STARTED_MARKER + filename))
+                fstools.touch(os.path.join(basepath, STARTED_MARKER + filename))
                 self.submit(res, os.path.split(res)[0]).result()
                 # future.clean()
             except BaseException:
@@ -457,7 +234,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             logger.debug("processing file " + str(file))
 
             if perms is not None:
-                check_permissions(file, **perms)
+                fstools.check_permissions(file, **perms)
 
             try:
                 self.to_openbis(file)
@@ -538,7 +315,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
 
     if os.path.exists(start_marker):
         logger.debug("Ignoring file %s because of started marker", file)
-        if is_old(start_marker):
+        if fstools.is_old(start_marker):
             logger.warning("Found an old start marker: %s.", start_marker)
         return
 
@@ -558,7 +335,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
             raise ValueError("Got marker %s, but %s does not exist" %
                              (finish_marker, file))
 
-        touch(start_marker)
+        fstools.touch(start_marker)
         handler.submit(file, basedir, perms)
         # handler will remove start_marker and finish marker
     except BaseException:
@@ -582,269 +359,3 @@ def listen(incoming, interval, handler):
             for marker in glob.glob(pjoin(basedir, FINISHED_MARKER + '*')):
                 process_marker(marker, basedir, name, handler, perms)
         time.sleep(interval)
-
-
-def error_exit(message):
-    print(message, file=sys.stderr)
-    sys.exit(1)
-
-
-def parse_args():
-    """ Read arguments from config file and command line args."""
-    options_default = {
-        'permissions': True,
-        'checksum': True,
-        'interval': 60,
-        'pidfile': '~/.dropboxhandler.pid',
-        'daemon': False,
-        'umask': 0o077,
-    }
-
-    parser = argparse.ArgumentParser(
-        description="Listen for new files in " +
-                    "dropboxdirs and move to ObenBis/storage",
-    )
-
-    parser.add_argument("-c", "--conf-file",
-                        help="Specify config file", metavar="FILE",
-                        default="~/.dropboxhandler.conf")
-    parser.add_argument("--print-example-config",
-                        help="Print a example config file to stdout.",
-                        action="store_true", default=False)
-    parser.add_argument('-d', '--daemon', action='store_true', default=None)
-    parser.add_argument('--pidfile', default=None)
-    parser.add_argument('--check-config', default=False, action='store_true',
-                        help="Do not start the daemon, but check the " +
-                        "config file")
-
-    args = parser.parse_args()
-
-    if args.print_example_config:
-        print_example_config()
-        sys.exit(0)
-
-    try:
-        with open(args.conf_file) as f:
-            config = yaml.load(f)
-    except FileNotFoundError:
-        error_exit("Could not find config file (default location: " +
-                   "~/.dropboxhandler.conf")
-    except yaml.parser.ParserError as e:
-        error_exit("Could not parse config file. Error was %s" % e)
-
-    for key in ['incoming', 'outgoing', 'openbis', 'options']:
-        if key not in config:
-            error_exit("Config file must include section '%s'" % key)
-
-    options_default.update(config['options'])
-    config['options'] = options_default
-
-    if args.pidfile is not None:
-        config['options']['pidfile'] = args.pidfile
-    if args.daemon is not None:
-        config['options']['daemon'] = args.daemon
-    config['check_config'] = args.check_config
-
-    return config
-
-
-def check_options(options):
-    for key in options:
-        if key == 'permissions' and options[key] not in [True, False]:
-            error_exit("Invalid value for 'permissions' in section 'options'")
-        elif key == 'checksum' and options[key] not in [True, False]:
-            error_exit("Invalid value for 'checksum' in section 'options'")
-        elif key == 'interval' and not isinstance(options[key], numbers.Real):
-            error_exit("Invalid value for 'interval' in section 'options'")
-            if options[key] <= 0:
-                error_exit("'interval' in section 'options' must be positive")
-        elif key == 'pidfile' and not os.path.isabs(options[key]):
-            error_exit("Invalid value for 'pidfile' in section 'options'")
-        elif key == 'pidfile' and os.path.exists(options[key]):
-            error_exit("pidfile exists. Is the daemon already running?")
-        elif key == 'umask' and not isinstance(options[key], int):
-            error_exit("Invalid value for 'umask' in section 'options'")
-        elif key == 'daemon' and options[key] not in [True, False]:
-            error_exit("Invalid value for 'daemon' in section 'options'")
-
-
-def check_outgoing(conf):
-    for key in conf:
-        if key not in ['manual', 'storage', 'tmpdir', 'msconvert']:
-            error_exit("Invalid path for key %s in section 'outgoing'" % key)
-        if not os.path.isabs(conf[key]):
-            error_exit("Path in config section 'outgoing' is not absolute: %s"
-                       % conf[key])
-        if not os.path.isdir(conf[key]):
-            error_exit("Path in config is not a directory: %s" % conf[key])
-
-
-def _user_to_uid(user):
-    try:
-        return pwd.getpwnam(user).pw_uid
-    except KeyError:
-        error_exit("Invalid user name: %s" % user)
-
-
-def _group_to_gid(group):
-    try:
-        return grp.getgrnam(group).gr_gid
-    except KeyError:
-        error_exit("Invalid group name: %s" % group)
-
-
-def _check_permission_config(conf):
-    for key in conf:
-        if key == 'user':
-            conf[key] = _user_to_uid(conf[key])
-        elif key == 'group':
-            conf[key] = _group_to_gid(conf[key])
-        elif key in ['filemode', 'dirmode']:
-            if not isinstance(conf[key], int):
-                error_exit("Invalid value for key %s in section " +
-                           "'incoming'" % key)
-        else:
-            error_exit("Unknown key '%s' in section 'incoming'" % key)
-
-
-def check_incoming(conf):
-    if not isinstance(conf, list):
-        error_exit("Config section 'incoming' is not a list")
-    for section in conf:
-        if 'path' not in section:
-            error_exit("Missing key 'path' in section 'incoming'")
-        if 'name' not in section:
-            error_exit("Missing key 'name' in section 'incoming'")
-        if 'perms' in section:
-            _check_permission_config(section['perms'])
-
-
-def check_openbis(config):
-    if not isinstance(config, list):
-        error_exit("Config section 'openbis' is not a list")
-    for conf in config:
-        for key in conf:
-            if key == 'regexp':
-                try:
-                    re.compile(conf[key])
-                except re.error:
-                    error_exit("Invalid regular expression: %s" % conf[key])
-            elif key == 'path':
-                if not os.path.isdir(conf[key]):
-                    error_exit("Not a directory: %s" % conf[key])
-                if not os.path.isabs(conf[key]):
-                    error_exit("Not an absolute path: %s" % conf[key])
-            else:
-                error_exit("Unexpected option %s in section 'openbis'" % key)
-
-
-def check_configuration(config):
-    """ Sanity checks for configuration. """
-    check_options(config['options'])
-    check_outgoing(config['outgoing'])
-    check_incoming(config['incoming'])
-    check_openbis(config['openbis'])
-
-
-def print_example_config():
-    config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
-    with open(config_path) as f:
-        print(f.read())
-
-
-def daemonize(func, pidfile, umask, *args, **kwargs):
-    """ Run ``func`` in new process independent from this one.
-
-    Write the pid of the new daemon to pidfile.
-    """
-    logger.info("Starting new daemon")
-    os.chdir('/')
-    try:
-        pid = os.fork()
-    except OSError:
-        print("Fork failed.", file=sys.stderr)
-        sys.exit(1)
-    if pid:
-        os._exit(0)
-
-    # new process group
-    os.setsid()
-
-    try:
-        pid = os.fork()
-    except OSError:
-        print("Fork failed.", file=sys.stderr)
-        sys.exit(1)
-
-    if pid:
-        os._exit(0)
-
-    logger.info("PID of new daemon: %s", os.getpid())
-
-    os.umask(umask)
-    write_pidfile(pidfile)
-    close_open_fds()
-    init_signal_handler()
-    try:
-        func(*args, **kwargs)
-    except Exception:
-        logger.critical("Unexpected error. Daemon is stopping")
-        logger.exception("Error was:")
-
-
-def write_pidfile(pidfile):
-    try:
-        with create_open(pidfile) as f:
-            f.write(str(os.getpid()) + '\n')
-    except FileExistsError:
-        error_exit("Could not write pidfile %s. Is the daemon running?" %
-                   pidfile)
-        sys.exit(1)
-
-    atexit.register(lambda: os.remove(pidfile))
-
-
-def close_open_fds():
-    # use devnull for std file descriptors
-    devnull = os.open('/dev/null', os.O_RDWR)
-    for i in range(3):
-        os.dup2(devnull, 0)
-
-
-def main():
-    args = parse_args()
-    check_configuration(args)
-    if args['check_config']:
-        print('Config file seems fine.')
-        sys.exit(0)
-    init_logging(args['logging'])
-    try:
-        handler_args = {
-            'openbis_dropboxes': args['openbis'],
-            'checksum': args['options']['checksum'],
-        }
-        handler_args.update(args['outgoing'])
-        with FileHandler(**handler_args) as handler:
-            listen_args = {
-                'incoming': args['incoming'],
-                'interval': args['options']['interval'],
-                'handler': handler,
-            }
-            if args['options']['daemon']:
-                daemonize(
-                    listen, args['options']['pidfile'],
-                    args['options']['umask'], **listen_args
-                )
-            else:
-                init_signal_handler()
-                os.umask(args['options']['umask'])
-                listen(**listen_args)
-
-    except Exception:
-        logging.critical("Daemon is shutting down for unknown reasons")
-        logging.exception('Error was:')
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()
