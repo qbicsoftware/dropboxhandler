@@ -316,7 +316,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
     if os.path.exists(start_marker):
         logger.debug("Ignoring file %s because of started marker", file)
         if fstools.is_old(start_marker):
-            logger.warning("Found an old start marker: %s.", start_marker)
+            logger.error("Found an old start marker: %s.", start_marker)
         return
 
     try:

@@ -20,6 +20,11 @@ from . import fstools
 logger = logging.getLogger('dropboxhandler')
 
 
+class RestartException(BaseException):
+    """ Raised on SIGUSR1 to indicate that the config file changed."""
+    pass
+
+
 def init_logging(options):
     global logger
 
@@ -101,21 +106,18 @@ def init_signal_handler():
     def handler(sig, frame):
         if sig == signal.SIGTERM:
             logger.info("Daemon got SIGTERM. Shutting down.")
-            sys.exit(0)
-        elif sig == signal.SIGCONT:
-            logger.info("Daemon got SIGCONT. Continuing.")
-        elif sig == signal.SIGINT:
-            logger.info("Daemon got SIGINT. Shutting down.")
-            sys.exit(0)
+            raise SystemExit
+        elif sig == signal.SIGHUP:
+            logging.info("Got SIGHUP, restart daemon with new config")
+            raise RestartException
         else:
             logger.error("Signal handler did not expect to get %s", sig)
 
     signal.signal(signal.SIGTERM, handler)
-    signal.signal(signal.SIGCONT, handler)
-    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGHUP, handler)
 
 
-def main():
+def start():
     args = parse_args()
     check_configuration(args)
     if args['check_config']:
@@ -148,6 +150,13 @@ def main():
         logging.critical("Daemon is shutting down for unknown reasons")
         logging.exception('Error was:')
         sys.exit(1)
+
+
+def main():
+    try:
+        start()
+    except RestartException:
+        main()
 
 
 def error_exit(message):

@@ -123,6 +123,7 @@ def test_write_checksum():
     shutil.rmtree(dir)
 
 
+@raises(ValueError)
 def test_recursive_link():
     base = tempfile.mkdtemp()
 
@@ -136,11 +137,8 @@ def test_recursive_link():
     dest = os.path.join(base, 'dest')
     try:
         recursive_link(source, dest)
-    except ValueError:
-        pass
-    else:
-        assert False
-    shutil.rmtree(base)
+    finally:
+        shutil.rmtree(base)
 
 
 def test_example_file():
