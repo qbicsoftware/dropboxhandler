@@ -4,7 +4,7 @@ from __future__ import print_function
 from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
     write_checksum, recursive_link, generate_openbis_name,
-    FileHandler, fscall, print_example_config,
+    FileHandler, print_example_config,
 )
 from nose.tools import raises
 import nose
@@ -24,6 +24,10 @@ try:
     from unittest import mock
 except ImportError:
     import mock
+try:
+    from dropboxhandler import fscall
+except ImportError:
+    fscall = False
 
 logging_config = {
     'version': 1,

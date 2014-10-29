@@ -8,7 +8,6 @@ import os
 import time
 import shutil
 import logging
-import logging.config
 import glob
 import traceback
 import concurrent.futures

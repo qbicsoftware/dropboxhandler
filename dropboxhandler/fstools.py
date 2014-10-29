@@ -31,6 +31,27 @@ def create_open(path):
         return open(path, mode='x')
 
 
+# python 2.6 compat
+if not hasattr(subprocess, 'check_output'):
+    def check_output(*args, **kwargs):
+        kwargs['stdout'] = subprocess.PIPE
+        try:
+            proc = subprocess.Popen(*args, **kwargs)
+            stdout, stderr = proc.communicate()
+        except:
+            proc.kill()
+            proc.wait()
+            raise
+        retcode = proc.poll()
+        if retcode:
+            raise subprocess.CalledProcessError(
+                retcode, list(args[0])
+            )
+        return stdout
+
+    subprocess.check_output = check_output
+
+
 def touch(path):
     with create_open(path):
         pass

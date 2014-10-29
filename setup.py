@@ -1,9 +1,7 @@
 from setuptools import setup
 import sys
 
-assert sys.version_info >= (2, 7)
-
-install_requires = ['PyYAML']
+install_requires = ['PyYAML', 'logutils']
 if sys.version_info < (2, 7):
     install_requires.append("argparse")
 
@@ -12,9 +10,6 @@ if sys.version_info < (3, 3):
 
 if sys.version_info < (3, 2):
     install_requires.append('futures')
-
-if sys.version_info < (3, 4):
-    install_requires.append('pathlib')
 
 setup(
     name='dropboxhandler',

@@ -30,6 +30,9 @@ def init_logging(options):
 
     try:
         logging.config.dictConfig(options)
+    except AttributeError:
+        import logutils.dictconfig
+        logutils.dictconfig.dictConfig(options)
     except Exception as e:
         traceback.print_exc()
         error_exit("Could not load logging information from config: %s " % e)
