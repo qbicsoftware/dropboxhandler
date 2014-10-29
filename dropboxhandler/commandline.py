@@ -90,12 +90,15 @@ def write_pidfile(pidfile):
     try:
         with fstools.create_open(pidfile) as f:
             f.write(str(os.getpid()) + '\n')
+        atexit.register(lambda: os.remove(pidfile))
     except fstools.FileExistsError:
+        with open(pidfile) as f:
+            # the pidfile is correct if the service is re-reading its config
+            if os.getpid() == int(f.read()):
+                return
         error_exit("Could not write pidfile %s. Is the daemon running?" %
                    pidfile)
         sys.exit(1)
-
-    atexit.register(lambda: os.remove(pidfile))
 
 
 def close_open_fds():
@@ -111,7 +114,7 @@ def init_signal_handler():
             logger.info("Daemon got SIGTERM. Shutting down.")
             raise SystemExit
         elif sig == signal.SIGHUP:
-            logging.info("Got SIGHUP, restart daemon with new config")
+            logger.info("Got SIGHUP, restart daemon with new config")
             raise RestartException
         else:
             logger.error("Signal handler did not expect to get %s", sig)
@@ -127,6 +130,7 @@ def start():
         print('Config file seems fine.')
         sys.exit(0)
     init_logging(args['logging'])
+    logger.info("Starting service")
     try:
         handler_args = {
             'openbis_dropboxes': args['openbis'],

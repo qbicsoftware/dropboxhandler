@@ -348,6 +348,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
 
 def listen(incoming, interval, handler):
     """ Watch directories `incomings` for new files and call FileHandler."""
+    logger.info("Starting to listen for new files")
     while True:
         for conf in incoming:
             basedir = conf['path']
