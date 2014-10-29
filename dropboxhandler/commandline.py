@@ -243,6 +243,9 @@ def check_options(options):
         elif key == 'pidfile' and not os.path.isabs(options[key]):
             error_exit("Invalid value for 'pidfile' in section 'options'")
         elif key == 'pidfile' and os.path.exists(options[key]):
+            with open(options[key]) as f:
+                if os.getpid() == int(f.read()):
+                    continue
             error_exit("pidfile exists. Is the daemon already running?")
         elif key == 'umask' and not isinstance(options[key], int):
             error_exit("Invalid value for 'umask' in section 'options'")
