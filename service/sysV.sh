@@ -18,27 +18,30 @@ lockfile=/var/lock/subsys/$prog
 pidfile=/var/run/${prog}.pid
 
 start() {
-    [ -x $exec ] || exit 5
-    [ -f $config ] || exit 6
-    [ -f $lockfile ] || exit 0
-    echo -n $"Starting $prog: "
+    [ -x $exec ] || (failure && exit 5)
+    [ -f $config ] || (failure && exit 6)
+    [ -f $lockfile ] && exit 0
+    echo $"Starting $prog: "
     # USER and USER_CONFIG_FILE must be defined in config
     . $config
-    [ -n "$USER" ] || exit 6
-    [ -n "$USER_CONFIG_FILE" ] || exit 6
-    [ -f $USER_CONFIG_FILE ] || exit 6
+    [ -n "$USER" ] || (failure && exit 6)
+    [ -n "$USER_CONFIG_FILE" ] || (failure && exit 6)
+    [ -f $USER_CONFIG_FILE ] || (failure && exit 6)
     su $USER -c "dropboxhandler -c ${USER_CONFIG_FILE} -d --pidfile $pidfile"
     retval=$?
     echo
     [ $retval -eq 0 ] && touch $lockfile
-    return $?
+    [ $retval -eq 0 ] && success || failure
+    return $retval
 }
 
 stop() {
     echo -n $"Stopping $prog: "
-    [ -f $pidfile ] || exit 0
+    [ -f $pidfile ] || (failure && exit 1)
+    read pid < $pidfile
+    [ -n "$pid" ] || (failure && exit 1)
 
-    kill -TERM $(cat $lockfile)
+    kill -TERM $pid
     counter=0
     while [ $counter -lt 500 ]; do
 	    [ -z $pidfile ] || break
@@ -46,10 +49,11 @@ stop() {
 	    let counter=counter+1
     done
     if [ -z $pidfile ] ; then
-	    kill -KILL $(cat $pidfile)
+	    kill -KILL $pid
 	    rm -f $pidfile
     fi
     rm -f $lockfile
+    success
     return 0
 }
 
