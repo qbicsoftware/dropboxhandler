@@ -13,7 +13,7 @@ if sys.version_info < (3, 2):
 
 setup(
     name='dropboxhandler',
-    version='1.3.0',
+    version='1.3.1',
     author='Adrian Seyboldt',
     author_email='adrian.seyboldt@web.de',
     url="https://github.com/qbicsoftware/dropboxhandler",
