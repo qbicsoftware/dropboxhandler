@@ -15,6 +15,7 @@ config="/etc/dropboxhandler.conf"
 [ -e /etc/sysconfig/$prog ] && . /etc/sysconfig/$prog
 
 lockfile=/var/lock/subsys/$prog
+pidfile=/var/run/${prog}.pid
 
 start() {
     [ -x $exec ] || exit 5
@@ -22,28 +23,33 @@ start() {
     [ -f $lockfile ] || exit 0
     echo -n $"Starting $prog: "
     # USER and USER_CONFIG_FILE must be defined in config
-    source $config
+    . $config
     [ -n "$USER" ] || exit 6
     [ -n "$USER_CONFIG_FILE" ] || exit 6
     [ -f $USER_CONFIG_FILE ] || exit 6
-    su $USER -c "dropboxhandler -c ${USER_CONFIG_FILE} -d --pidfile $lockfile"
+    su $USER -c "dropboxhandler -c ${USER_CONFIG_FILE} -d --pidfile $pidfile"
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && touch $lockfile
     return $?
 }
 
 stop() {
     echo -n $"Stopping $prog: "
-    [ -f $lockfile ] || exit 0
+    [ -f $pidfile ] || exit 0
 
     kill -TERM $(cat $lockfile)
     counter=0
-    while [ $counter -lt 20 ]; do
-	    [ -z $lockfile ] || break
+    while [ $counter -lt 500 ]; do
+	    [ -z $pidfile ] || break
+	    sleep 1
 	    let counter=counter+1
     done
-    if [ -z $lockfile ] ; then
-	    kill -KILL $(cat $lockfile)
-	    rm -f $lockfile
+    if [ -z $pidfile ] ; then
+	    kill -KILL $(cat $pidfile)
+	    rm -f $pidfile
     fi
+    rm -f $lockfile
     return 0
 }
 
