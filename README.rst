@@ -25,6 +25,9 @@ Execute
 
     python setup.py install
 
+At github.com/qbicsoftware/specs you can find a spec file for building
+an RPM.
+
 Configure
 =========
 
@@ -42,3 +45,23 @@ adjust the config to your needs and store it in a file. To start the
 daemon, execute
 
     dropboxhandler --daemon -c config_file
+
+If you change the configuration check it with
+
+    dropboxhandler -c config_file --check-config
+
+and tell drobpoxhandler to re-read the config:
+
+    kill -HUP pid_of_dropboxhandler
+
+The new config will apply to all new incoming files and will not apply
+to files that are being processed when the signal arrived.
+
+System service
+==============
+
+The rpm that can be created with the spec file at qbicsoftware/specs
+has an additional config file at /etc/dropboxhandler.conf which must
+define the variables USER and USER_CONFIG_FILE pointing to the user
+the service should be executed as and the dropboxhandler config file.
+A template can be found at `service/drobpoxhandler.conf`
