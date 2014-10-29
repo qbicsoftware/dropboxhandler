@@ -293,7 +293,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
     their permissions, write their checksums to ``checksums.txt`` and sort them
     into apropriate subdirs.
     """
-    logging.debug("Found new marker file: %s", marker)
+    logger.debug("Found new marker file: %s", marker)
 
     filename = os.path.basename(marker)[len(FINISHED_MARKER):]
     file = pjoin(basedir, filename)

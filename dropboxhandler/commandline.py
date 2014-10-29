@@ -17,7 +17,7 @@ from . import dropboxhandler
 from . import fstools
 
 
-logger = logging.getLogger('dropboxhandler')
+logger = None
 
 
 class RestartException(BaseException):

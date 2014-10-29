@@ -29,7 +29,6 @@ start() {
     [ -f $USER_CONFIG_FILE ] || (failure && exit 6)
     su $USER -c "dropboxhandler -c ${USER_CONFIG_FILE} -d --pidfile $pidfile"
     retval=$?
-    echo
     [ $retval -eq 0 ] && touch $lockfile
     [ $retval -eq 0 ] && success || failure
     return $retval
