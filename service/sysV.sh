@@ -21,6 +21,14 @@ start() {
     echo -n $"Starting $prog: "
     [ -x $exec ] || return 5
     [ -f $config ] || return 6
+    if [ -f $lockfile ] ; then
+	    if [ -f $pidfile ] ; then
+		    return 0
+	    else
+		    echo "lockfile exists, but pidfile does not."
+		    return 1
+	    fi
+    fi
     [ -f $lockfile ] && return 0
     # USER and USER_CONFIG_FILE must be defined in config
     . $config
