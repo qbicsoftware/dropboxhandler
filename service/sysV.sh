@@ -19,26 +19,34 @@ pidfile=/var/run/${prog}.pid
 
 start() {
     echo -n $"Starting $prog: "
-    [ -x $exec ] || (failure && exit 5)
-    [ -f $config ] || (failure && exit 6)
-    [ -f $lockfile ] && failure && exit 0
+    [ -x $exec ] || return 5
+    [ -f $config ] || return 6
+    [ -f $lockfile ] && return 0
     # USER and USER_CONFIG_FILE must be defined in config
     . $config
-    [ -n "$USER" ] || (failure && exit 6)
-    [ -n "$USER_CONFIG_FILE" ] || (failure && exit 6)
-    [ -f $USER_CONFIG_FILE ] || (failure && exit 6)
+    if [ ! -n "$USER" ] ; then
+	    echo "missing value USER in config file $config"
+	    return 6
+    fi
+    if [ ! -n "${USER_CONFIG_FILE}" ] ; then
+	    echo "missing value USER_CONFIG_FILE in config file $config"
+	    return 6
+    fi
+    if [ ! -f ${USER_CONFIG_FILE} ] ; then
+	    echo "user config file not found"
+	    return 6
+    fi
     su $USER -c "dropboxhandler -c ${USER_CONFIG_FILE} -d --pidfile $pidfile"
     retval=$?
     [ $retval -eq 0 ] && touch $lockfile
-    [ $retval -eq 0 ] && success || failure
     return $retval
 }
 
 stop() {
     echo -n $"Stopping $prog: "
-    [ -f $pidfile ] || (failure && exit 1)
+    [ -f $pidfile ] || return 1
     read pid < $pidfile
-    [ -n "$pid" ] || (failure && exit 1)
+    [ -n "$pid" ] || return 1
 
     kill -TERM $pid
     counter=0
@@ -53,7 +61,6 @@ stop() {
 	    rm -f $pidfile
     fi
     rm -f $lockfile
-    success
     return 0
 }
 
@@ -110,4 +117,7 @@ case "$1" in
         echo $"Usage: $0 {start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
         exit 2
 esac
-exit $?
+retcode=$?
+[ $retcode -eq 0 ] && success || failure
+echo
+exit $retcode

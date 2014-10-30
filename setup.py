@@ -5,9 +5,6 @@ install_requires = ['PyYAML', 'logutils']
 if sys.version_info < (2, 7):
     install_requires.append("argparse")
 
-if sys.version_info < (3, 3):
-    install_requires.append("mock")
-
 if sys.version_info < (3, 2):
     install_requires.append('futures')
 
