@@ -118,9 +118,11 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         self._msconvert_dir = msconvert
         self._tmpdir = tmpdir
 
-    def _find_openbis_dest(self, name):
+    def _find_openbis_dest(self, origin, name):
         for conf in self._openbis_dropboxes:
             regexp, path = conf['regexp'], conf['path']
+            if 'origin' in conf and origin not in conf['origin']:
+                continue
             if re.match(regexp, name):
                 logger.debug("file %s matches regex %s", name, regexp)
                 return os.path.join(path, name)
@@ -128,7 +130,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
                      "an openbis dropbox: %s", name)
         raise ValueError('No known openbis dropbox for file %s' % name)
 
-    def to_openbis(self, file, perms=None):
+    def to_openbis(self, origin, file, perms=None):
         """ Sort this file or directory to the openbis dropboxes.
 
         If the filename does not include an openbis barcode, raise ValueError.
@@ -144,9 +146,9 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         openbis_name = generate_openbis_name(file)
         logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
 
-        dest = self._find_openbis_dest(openbis_name)
+        dest = self._find_openbis_dest(origin, openbis_name)
         dest_dir = os.path.split(dest)[0]
-        logger.info("Write file to openbis dropbox %s" % dest_dir)
+        logger.debug("Write file to openbis dropbox %s" % dest_dir)
 
         fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
 
@@ -162,7 +164,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             with fstools.create_open(marker):
                 pass
 
-    def to_storage(self, file, perms=None):
+    def to_storage(self, origin, file, perms=None):
         """Store file in a subdir of storage_dir with the name of the project.
 
         The first 4 letters of the barcode are the project name. If no barcode
@@ -187,14 +189,14 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
         fstools.write_checksum(dest)
 
-    def to_manual(self, file, perms=None):
+    def to_manual(self, origin, file, perms=None):
         """ Copy this file to the directory for manual intervention"""
         file = os.path.abspath(file)
         base, name = os.path.split(file)
         cleaned_name = fstools.clean_filename(file)
         dest = os.path.join(self._manual_dir, cleaned_name)
         fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
-        logger.info("manual intervention is required for %s", dest)
+        logger.warn("manual intervention is required for %s", dest)
 
         # store the original file name
         orig_file = os.path.join(self._manual_dir,
@@ -204,7 +206,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 
         fstools.write_checksum(dest)
 
-    def to_msconvert(self, file, beat_timeout=30):
+    def to_msconvert(self, origin, file, beat_timeout=30, perms=None):
         if not fscall:
             raise ValueError("msconvert need pathlib, which is not installed")
         future = fscall.submit(self._msconvert_dir, [file],
@@ -219,13 +221,13 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             try:
                 basepath, filename = os.path.split(res)
                 fstools.touch(os.path.join(basepath, STARTED_MARKER + filename))
-                self.submit(res, os.path.split(res)[0]).result()
+                self.submit(origin, res, os.path.split(res)[0]).result()
                 # future.clean()
             except BaseException:
                 message_to_admin('blubb')
                 raise
 
-    def _handle_file(self, file, perms=None):
+    def _handle_file(self, origin, file, perms=None):
         """ Figure out to which dirs file should be linked. """
         try:
             file = os.path.abspath(file)
@@ -236,10 +238,10 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
                 fstools.check_permissions(file, **perms)
 
             try:
-                self.to_openbis(file)
-                self.to_storage(file)
+                self.to_openbis(origin, file, perms=perms)
+                self.to_storage(origin, file, perms=perms)
             except ValueError:
-                self.to_manual(file)
+                self.to_manual(origin, file, perms=perms)
 
             logger.debug("Removing original file %s", file)
             try:
@@ -267,9 +269,11 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             with open(error_marker, 'w') as f:
                 traceback.print_exc(file=f)
 
-    def submit(self, path, basedir, perms=None):
+    def submit(self, origin, path, basedir, perms=None):
         filename = os.path.split(path)[1]
-        future = super(FileHandler, self).submit(self._handle_file, path)
+        future = super(FileHandler, self).submit(
+            self._handle_file, origin, path
+        )
 
         def remove_markers(future):
             started_marker = os.path.join(basedir, STARTED_MARKER + filename)
@@ -335,7 +339,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
                              (finish_marker, file))
 
         fstools.touch(start_marker)
-        handler.submit(file, basedir, perms)
+        handler.submit(incoming_name, file, basedir, perms)
         # handler will remove start_marker and finish marker
     except BaseException:
         logger.exception("An error occured while submitting a job. " +

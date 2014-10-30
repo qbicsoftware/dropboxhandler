@@ -90,7 +90,13 @@ def write_pidfile(pidfile):
     try:
         with fstools.create_open(pidfile) as f:
             f.write(str(os.getpid()) + '\n')
-        atexit.register(lambda: os.remove(pidfile))
+
+        def remove_pid():
+            try:
+                os.remove(pidfile)
+            except OSError:
+                pass
+        atexit.register(remove_pid)
     except fstools.FileExistsError:
         with open(pidfile) as f:
             # the pidfile is correct if the service is re-reading its config
@@ -111,10 +117,10 @@ def close_open_fds():
 def init_signal_handler():
     def handler(sig, frame):
         if sig == signal.SIGTERM:
-            logger.info("Daemon got SIGTERM. Shutting down.")
+            logger.warn("Daemon got SIGTERM. Shutting down.")
             raise SystemExit
         elif sig == signal.SIGHUP:
-            logger.info("Got SIGHUP, restart daemon with new config")
+            logger.warn("Got SIGHUP, restart daemon with new config")
             raise RestartException
         else:
             logger.error("Signal handler did not expect to get %s", sig)
@@ -123,7 +129,7 @@ def init_signal_handler():
     signal.signal(signal.SIGHUP, handler)
 
 
-def start():
+def start(ignore_daemon=False):
     args = parse_args()
     check_configuration(args)
     if args['check_config']:
@@ -143,7 +149,7 @@ def start():
                 'interval': args['options']['interval'],
                 'handler': handler,
             }
-            if args['options']['daemon']:
+            if not ignore_daemon and args['options']['daemon']:
                 daemonize(
                     dropboxhandler.listen, args['options']['pidfile'],
                     args['options']['umask'], **listen_args
@@ -159,11 +165,11 @@ def start():
         sys.exit(1)
 
 
-def main():
+def main(ignore_daemon=False):
     try:
-        start()
+        start(ignore_daemon)
     except RestartException:
-        main()
+        main(True)
 
 
 def error_exit(message):
@@ -319,6 +325,9 @@ def check_openbis(config):
                     error_exit("Not a directory: %s" % conf[key])
                 if not os.path.isabs(conf[key]):
                     error_exit("Not an absolute path: %s" % conf[key])
+            elif key == 'origin':
+                if not isinstance(conf[key], list):
+                    error_exit("'origin' in 'openbis' section must be a list")
             else:
                 error_exit("Unexpected option %s in section 'openbis'" % key)
 

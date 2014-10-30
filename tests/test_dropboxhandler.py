@@ -179,7 +179,7 @@ class TestFileHandler:
     @mock.patch('os.mkdir')
     @mock.patch('dropboxhandler.fstools.recursive_link')
     def test_to_storage(self, link, mkdir, chksum):
-        self.handler.to_storage('/tmp/bob.txt', perms=self.perms)
+        self.handler.to_storage('origin', '/tmp/bob.txt', perms=self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'other'))
         link.assert_called_with(
             '/tmp/bob.txt',
@@ -191,7 +191,7 @@ class TestFileHandler:
     @mock.patch('os.mkdir')
     @mock.patch('dropboxhandler.fstools.recursive_link')
     def test_to_storage_barcode(self, link, mkdir, chksum):
-        self.handler.to_storage('/tmp/QJFDC010EUääa.txt', self.perms)
+        self.handler.to_storage('origin', '/tmp/QJFDC010EUääa.txt', self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'QJFDC'))
         link.assert_called_with(
             '/tmp/QJFDC010EUääa.txt',
@@ -236,7 +236,7 @@ class TestFileHandler:
             name = pjoin(self.paths['incoming'], 'tmpfile')
             with open(name, 'w') as f:
                 f.write('hi')
-            self.handler.to_msconvert(name, beat_timeout=2)
+            self.handler.to_msconvert('origin', name, beat_timeout=2)
             print(os.listdir(self.paths['manual']))
             assert pexists(pjoin(self.paths['manual'],
                                  'output', 'data.mzml'))
@@ -252,6 +252,8 @@ class TestIntegration:
         for name in self.names:
             self.paths[name] = os.path.join(self.base, name)
             os.mkdir(self.paths[name])
+            print(self.paths[name])
+            print(os.listdir(self.paths[name]))
 
         self.pidfile = pjoin(self.base, 'pidfile')
         self.logfile = pjoin(self.base, 'log')
@@ -278,7 +280,8 @@ class TestIntegration:
                 'openbis': [
                     {'regexp': "^\w*.raw$", 'path': self.paths['openbis_raw']},
                     {'regexp': "^\w*.mzml$",
-                     'path': self.paths['openbis_mzml']},
+                     'path': self.paths['openbis_mzml'],
+                     'origin': ['incoming1']},
                 ],
                 'logging': {
                     'version': 1,
