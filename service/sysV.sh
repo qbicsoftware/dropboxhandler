@@ -18,10 +18,10 @@ lockfile=/var/lock/subsys/$prog
 pidfile=/var/run/${prog}.pid
 
 start() {
+    echo -n $"Starting $prog: "
     [ -x $exec ] || (failure && exit 5)
     [ -f $config ] || (failure && exit 6)
-    [ -f $lockfile ] && exit 0
-    echo $"Starting $prog: "
+    [ -f $lockfile ] && failure && exit 0
     # USER and USER_CONFIG_FILE must be defined in config
     . $config
     [ -n "$USER" ] || (failure && exit 6)
@@ -49,6 +49,7 @@ stop() {
     done
     if [ -z $pidfile ] ; then
 	    kill -KILL $pid
+	    sleep 1
 	    rm -f $pidfile
     fi
     rm -f $lockfile
