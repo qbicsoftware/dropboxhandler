@@ -25,7 +25,7 @@ if not hasattr(__builtins__, 'FileExistsError'):
 if not hasattr(__builtins__, 'FileNotFoundError'):
     FileNotFoundError = OSError
 
-logger = logging.getLogger('dropboxhandler')
+logger = logging.getLogger('dropboxhandler.handler')
 
 BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
 FINISHED_MARKER = ".MARKER_is_finished_"

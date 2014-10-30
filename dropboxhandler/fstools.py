@@ -13,7 +13,7 @@ if not hasattr(__builtins__, 'FileExistsError'):
 if not hasattr(__builtins__, 'FileNotFoundError'):
     FileNotFoundError = OSError
 
-logger = logging.getLogger('dropboxhandler')
+logger = logging.getLogger('dropboxhandler.fstools')
 
 
 # python2 does not allow open(..., mode='x')

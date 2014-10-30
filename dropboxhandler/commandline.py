@@ -37,7 +37,7 @@ def init_logging(options):
         traceback.print_exc()
         error_exit("Could not load logging information from config: %s " % e)
 
-    logger = logging.getLogger('dropboxhandler')
+    logger = logging.getLogger('dropboxhandler.commandline')
 
 
 def daemonize(func, pidfile, umask, *args, **kwargs):

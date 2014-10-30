@@ -49,6 +49,7 @@ openbis:
 # See https://docs.python.org/2/library/logging.config.html
 logging:
     version: 1,
+    disable_existing_loggers: False,
     root:
         level: NOTSET
         handlers: ['file', 'smtp']
