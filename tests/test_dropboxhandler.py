@@ -93,9 +93,9 @@ def test_write_checksum():
     with open(data, 'w') as f:
         f.write("hi")
     write_checksum(data)
-    with open(data + '.sha256') as f:
+    with open(data + '.sha256sum') as f:
         print(f.read())
-    subprocess.check_call('sha256sum -c --status %s.sha256' % data,
+    subprocess.check_call('sha256sum -c --status %s.sha256sum' % data,
                           shell=True, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, cwd=dir)
 
@@ -104,7 +104,7 @@ def test_write_checksum():
 
     try:
         subprocess.check_call(
-            'sha256sum -c --status --strict %s.sha256' % data,
+            'sha256sum -c --status --strict %s.sha256sum' % data,
             shell=True, cwd=dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         assert False
@@ -120,7 +120,7 @@ def test_write_checksum():
 
     write_checksum(datadir)
 
-    subprocess.check_call('sha256sum -c --status %s.sha256' % datadir,
+    subprocess.check_call('sha256sum -c --status %s.sha256sum' % datadir,
                           cwd=dir, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, shell=True)
 
@@ -357,8 +357,8 @@ class TestIntegration:
     def test_manual(self):
         self._send_file('dataaä .txt')
         assert pexists(pjoin(self.paths['manual'], 'dataa.txt'))
-        assert pexists(pjoin(self.paths['manual'], 'dataa.txt.sha256'))
-        with open(pjoin(self.paths['manual'], 'dataa.txt.sha256')) as f:
+        assert pexists(pjoin(self.paths['manual'], 'dataa.txt.sha256sum'))
+        with open(pjoin(self.paths['manual'], 'dataa.txt.sha256sum')) as f:
             assert 'dataa.txt' in f.read()
         origfile = pjoin(self.paths['manual'], 'dataa.txt.origlabfilename')
         with open(origfile) as f:
