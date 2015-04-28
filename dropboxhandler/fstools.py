@@ -76,7 +76,7 @@ def write_checksum(file):
     """
     file = os.path.abspath(file)
     basedir = os.path.split(file)[0]
-    checksum_file = str(file) + '.sha256'
+    checksum_file = str(file) + '.sha256sum'
 
     files = subprocess.check_output(
         [
