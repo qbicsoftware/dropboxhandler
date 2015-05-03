@@ -150,17 +150,25 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         openbis_name = generate_openbis_name(file)
         logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
 
-        dest = self._find_openbis_dest(origin, openbis_name)
-        dest_dir = os.path.split(dest)[0]
-        logger.debug("Write file to openbis dropbox %s" % dest_dir)
+        is_dir = os.path.isdir(origin)
+        dest = self._find_openbis_dest(origin, openbis_name, is_dir)
 
-        fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
+        # Put all related files inside a directory, so that openbis
+        # can process them together.
+        dest_file = os.path.join(dest, openbis_name)
+        dest_dir = os.path.split(dest)[0]
+        os.mkdir(dest)
+
+        logger.debug("Write file to openbis dropbox %s" % dest)
+        fstools.recursive_link(
+            file, dest_file, tmpdir=self._tmpdir, perms=perms
+        )
 
         labname_file = "%s.origlabfilename" % openbis_name
-        with fstools.create_open(os.path.join(dest_dir, labname_file)) as f:
+        with fstools.create_open(os.path.join(dest, labname_file)) as f:
             f.write(orig_name)
 
-        fstools.write_checksum(dest)
+        fstools.write_checksum(dest_file)
 
         # tell openbis that we are finished copying
         for name in [openbis_name]:

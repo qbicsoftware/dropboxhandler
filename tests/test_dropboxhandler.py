@@ -399,7 +399,9 @@ class TestIntegration:
         assert pexists(pjoin(self.paths['openbis_raw'], marker))
 
         origname_file = pjoin(
-            self.paths['openbis_raw'], expected_name + '.origlabfilename'
+            self.paths['openbis_raw'],
+            expected_name,
+            expected_name + '.origlabfilename',
         )
         assert pexists(origname_file)
         with open(origname_file, 'r') as f:
