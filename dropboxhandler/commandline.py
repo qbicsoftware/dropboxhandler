@@ -328,6 +328,10 @@ def check_openbis(config):
             elif key == 'origin':
                 if not isinstance(conf[key], list):
                     error_exit("'origin' in 'openbis' section must be a list")
+            elif key == 'match_dir':
+                pass
+            elif key == 'match_file':
+                pass
             else:
                 error_exit("Unexpected option %s in section 'openbis'" % key)
 

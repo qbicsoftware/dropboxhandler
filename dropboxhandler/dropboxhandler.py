@@ -118,10 +118,14 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         self._msconvert_dir = msconvert
         self._tmpdir = tmpdir
 
-    def _find_openbis_dest(self, origin, name):
+    def _find_openbis_dest(self, origin, name, is_dir):
         for conf in self._openbis_dropboxes:
             regexp, path = conf['regexp'], conf['path']
             if 'origin' in conf and origin not in conf['origin']:
+                continue
+            if is_dir and not conf.get('match_dir', True):
+                continue
+            if not is_dir and not conf.get('match_file', True):
                 continue
             if re.match(regexp, name):
                 logger.debug("file %s matches regex %s", name, regexp)

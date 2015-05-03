@@ -42,6 +42,8 @@ outgoing:
 openbis:
    - regexp: "^\\w*.raw$"
      path: /path/to/raw/dropbox
+     match_file: True
+     match_dir: False  # do not match incoming directories
      origin: ['dropbox1']  # only match files from these dropboxes
    - regexp: "^\\w*.fastq$"
      path: /path/to/fastq/dropbox
