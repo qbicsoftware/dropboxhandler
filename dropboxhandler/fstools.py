@@ -68,7 +68,7 @@ def is_old(path):
 def write_checksum(file):
     """ Compute checksums of file or of contents if it is a dir.
 
-    Checksums will be written to <inputfile>.sha256 in the
+    Checksums will be written to <inputfile>.sha256sum in the
     format of the sha256sum tool.
 
     If file is a directory, the checksum file will include the

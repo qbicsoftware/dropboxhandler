@@ -407,6 +407,13 @@ class TestIntegration:
         with open(origname_file, 'r') as f:
             assert f.read() == "äää  \t({QJFDC066BIblub.RAw"
 
+        checksum_file = pjoin(
+            self.paths['openbis_raw'],
+            expected_name,
+            expected_name + '.sha256sum'
+        )
+        assert pexists(checksum_file)
+
     def test_storage(self):
         self._send_file('hi_barcode:QJFDC066BI.raw')
         assert pexists(pjoin(self.paths['storage'], 'QJFDC',
