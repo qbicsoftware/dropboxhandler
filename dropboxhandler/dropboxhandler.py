@@ -150,7 +150,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         openbis_name = generate_openbis_name(file)
         logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
 
-        is_dir = os.path.isdir(origin)
+        is_dir = os.path.isdir(file)
         dest = self._find_openbis_dest(origin, openbis_name, is_dir)
 
         # Put all related files inside a directory, so that openbis

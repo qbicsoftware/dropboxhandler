@@ -308,6 +308,10 @@ def check_incoming(conf):
             error_exit("Missing key 'name' in section 'incoming'")
         if 'perms' in section:
             _check_permission_config(section['perms'])
+        allowed = ['path', 'name', 'perms']
+        unknown = set(section) - set(allowed)
+        if unknown:
+            error_exit("Unknown options %s in config section 'incoming'")
 
 
 def check_openbis(config):
@@ -328,9 +332,7 @@ def check_openbis(config):
             elif key == 'origin':
                 if not isinstance(conf[key], list):
                     error_exit("'origin' in 'openbis' section must be a list")
-            elif key == 'match_dir':
-                pass
-            elif key == 'match_file':
+            elif key in ['match_dir', 'match_file']:
                 pass
             else:
                 error_exit("Unexpected option %s in section 'openbis'" % key)
