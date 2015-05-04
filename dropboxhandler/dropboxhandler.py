@@ -285,9 +285,23 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
                 traceback.print_exc(file=f)
 
     def submit(self, origin, path, basedir, perms=None):
+        """ Submit an incoming file or directory to the thread pool.
+
+        Arguments
+        ---------
+        origin: str
+            The name of the dropbox the file came from, as specified in
+            the config file.
+        path: str
+            Path to the incoming file or directory.
+        basedir: str
+            Path to the dropbox that contains the incoming file.
+        perms: dict
+            A dictionary with arguments to `fstools.check_permissions`.
+        """
         filename = os.path.split(path)[1]
         future = super(FileHandler, self).submit(
-            self._handle_file, origin, path
+            self._handle_file, origin, path, perms
         )
 
         def remove_markers(future):
