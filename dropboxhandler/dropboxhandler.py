@@ -308,13 +308,13 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
             started_marker = os.path.join(basedir, STARTED_MARKER + filename)
             finish_marker = os.path.join(basedir, FINISHED_MARKER + filename)
             try:
-                os.unlink(started_marker)
-            except OSError:
-                logger.error("Could not find start marker for file %s", path)
-            try:
                 os.unlink(finish_marker)
             except OSError:
                 logger.error("Could not find finish marker for file %s", path)
+            try:
+                os.unlink(started_marker)
+            except OSError:
+                logger.error("Could not find start marker for file %s", path)
         future.add_done_callback(remove_markers)
         return future
 
@@ -322,9 +322,21 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 def process_marker(marker, basedir, incoming_name, handler, perms=None):
     """ Check if there are new files in `incoming` and handle them if so.
 
-    Check for a marker file in `incoming`. If new files are found, check
-    their permissions, write their checksums to ``checksums.txt`` and sort them
-    into apropriate subdirs.
+    Marker files
+    ------------
+    - All incoming files are expected to write a marker file
+      `FINISHED_MARKER<filename>` when copying is finished. Incoming files
+      without such a marker file will be silently ignored.
+
+    - If a file is being processed by the dropboxhandler, a
+      `STARTED_MARKER<filename>` marker file is written. This will be removed
+      after the incoming file itself has been moved to the correct location.
+
+    - If the incoming file has incorrect permissions or if handling the
+      file fails for another reason, a `ERROR_MARKER<filename>` marker file
+      is created, that contains the error message. If this file is removed
+      and a new `FINISHED_MARKER<filename>` marker file is created, the
+      dropboxhandler will try again.
     """
     logger.debug("Found new marker file: %s", marker)
 
