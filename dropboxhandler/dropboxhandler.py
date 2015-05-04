@@ -170,6 +170,9 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 
         fstools.write_checksum(dest_file)
 
+        with fstools.create_open(os.path.join(dest, "source_dropbox.txt")) as f:
+            f.write(origin)
+
         # tell openbis that we are finished copying
         for name in [openbis_name]:
             marker = os.path.join(dest_dir, FINISHED_MARKER + name)

@@ -414,6 +414,15 @@ class TestIntegration:
         )
         assert pexists(checksum_file)
 
+        source_file = pjoin(
+            self.paths['openbis_raw'],
+            expected_name,
+            "source_dropbox.txt"
+        )
+
+        with open(source_file) as f:
+            assert f.read() == "incoming1"
+
     def test_storage(self):
         self._send_file('hi_barcode:QJFDC066BI.raw')
         assert pexists(pjoin(self.paths['storage'], 'QJFDC',
