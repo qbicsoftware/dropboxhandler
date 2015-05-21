@@ -278,14 +278,14 @@ class TestIntegration:
                     'tmpdir': self.paths['tmpdir'],
                 },
                 'openbis': [
-                    {'regexp': "^\w*.raw$", 'path': self.paths['openbis_raw']},
+                    {'regexp': "^\w*.(raw|RAw)$", 'path': self.paths['openbis_raw']},
                     {'regexp': "^\w*.mzml$",
                      'path': self.paths['openbis_mzml'],
                      'origin': ['incoming1']},
                 ],
                 'logging': {
                     'version': 1,
-                    'root': {'level': 'NOTSET',
+                    'root': {'level': 'DEBUG',
                              'handlers': ['file']},
                     'handlers': {
                         'file': {
@@ -393,7 +393,8 @@ class TestIntegration:
 
     def test_openbis(self):
         self._send_file("äää  \t({QJFDC066BIblub.RAw")
-        expected_name = 'QJFDC066BI_blub.raw'
+        expected_name = 'QJFDC066BI_blub.RAw'
+        print(os.listdir(self.paths['openbis_raw']))
         assert pexists(pjoin(self.paths['openbis_raw'], expected_name))
         marker = '.MARKER_is_finished_' + expected_name
         assert pexists(pjoin(self.paths['openbis_raw'], marker))
