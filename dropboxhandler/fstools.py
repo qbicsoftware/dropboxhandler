@@ -121,7 +121,7 @@ def clean_filename(path):
     if not all(i in allowed_chars + '.' for i in suffix):
         raise ValueError("Bad file suffix: " + suffix)
 
-    return cleaned_stem + suffix.lower()
+    return cleaned_stem + suffix
 
 
 def _check_perms(path, userid, groupid, dirmode, filemode):

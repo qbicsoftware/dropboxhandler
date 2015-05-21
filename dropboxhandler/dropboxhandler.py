@@ -60,7 +60,10 @@ def extract_barcode(path):
     """
     stem, suffix = os.path.splitext(os.path.basename(path))
     barcodes = re.findall(BARCODE_REGEX, stem)
-    barcodes = [b for b in barcodes if is_valid_barcode(b)]
+    valid_barcodes = [b for b in barcodes if is_valid_barcode(b)]
+    if len(barcodes) != len(valid_barcodes):
+        logger.warn("Invalid barcode in file name: %s",
+                    set(barcodes) - set(valid_barcodes))
     if not barcodes:
         raise ValueError("no barcodes found")
     if len(set(barcodes)) > 1:
@@ -81,14 +84,13 @@ def generate_openbis_name(path):
     >>> generate_openbis_name(path)
     'QJFDC010EU_stpidname.raw'
     """
-    barcode = extract_barcode(path)
-    path = path.replace(barcode, "")
     cleaned_name = fstools.clean_filename(path)
-    return barcode + '_' + cleaned_name
+    barcode = extract_barcode(cleaned_name)
+    name = cleaned_name.replace(barcode, "")
+    return barcode + '_' + name
 
 
 class FileHandler(concurrent.futures.ThreadPoolExecutor):
-
     """ Handle incoming files.
 
     Parameters

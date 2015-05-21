@@ -287,9 +287,11 @@ def _group_to_gid(group):
 def _check_permission_config(conf):
     for key in conf:
         if key == 'user':
-            conf[key] = _user_to_uid(conf[key])
+            conf['userid'] = _user_to_uid(conf[key])
+            del conf['user']
         elif key == 'group':
-            conf[key] = _group_to_gid(conf[key])
+            conf['groupid'] = _group_to_gid(conf[key])
+            del conf['group']
         elif key in ['filemode', 'dirmode']:
             if not isinstance(conf[key], int):
                 error_exit("Invalid value for key %s in section " +
