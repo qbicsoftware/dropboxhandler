@@ -238,8 +238,9 @@ class TestFileHandler:
                 f.write('hi')
             self.handler.to_msconvert('origin', name, beat_timeout=2)
             print(os.listdir(self.paths['manual']))
+            print(os.listdir(os.path.join(self.paths['manual'], 'output')))
             assert pexists(pjoin(self.paths['manual'],
-                                 'output', 'data.mzml'))
+                                 'output', 'output', 'data.mzml'))
 
 
 class TestIntegration:
@@ -298,13 +299,15 @@ class TestIntegration:
             }
             yaml.dump(config, f)
 
-        subprocess.check_call(
-            'dropboxhandler -c %s -d' % self.conf,
-            shell=True
-        )
-        time.sleep(.1)
-        with open(self.logfile) as f:
-            print(f.read())
+        try:
+            subprocess.check_call(
+                'dropboxhandler -c %s -d' % self.conf,
+                shell=True
+            )
+            time.sleep(.1)
+        finally:
+            with open(self.logfile) as f:
+                print(f.read())
         assert os.path.exists(self.pidfile)
 
     def tearDown(self):
@@ -357,10 +360,16 @@ class TestIntegration:
     def test_manual(self):
         self._send_file('dataaä .txt')
         assert pexists(pjoin(self.paths['manual'], 'dataa.txt'))
-        assert pexists(pjoin(self.paths['manual'], 'dataa.txt.sha256sum'))
-        with open(pjoin(self.paths['manual'], 'dataa.txt.sha256sum')) as f:
+        assert pexists(pjoin(self.paths['manual'],
+                             'dataa.txt',
+                             'dataa.txt.sha256sum'))
+        with open(pjoin(self.paths['manual'],
+                        'dataa.txt',
+                        'dataa.txt.sha256sum')) as f:
             assert 'dataa.txt' in f.read()
-        origfile = pjoin(self.paths['manual'], 'dataa.txt.origlabfilename')
+        origfile = pjoin(self.paths['manual'],
+                         'dataa.txt',
+                         'dataa.txt.origlabfilename')
         with open(origfile) as f:
             assert f.read() == 'dataaä .txt'
 
@@ -388,7 +397,7 @@ class TestIntegration:
         outpath = pjoin(self.paths['manual'], 'testdir')
         assert pexists(outpath)
         assert os.path.isdir(outpath)
-        assert pexists(pjoin(outpath, 'file1'))
+        assert pexists(pjoin(outpath, 'testdir', 'file1'))
         assert os.stat(outpath).st_mode & self.umask == 0
 
     def test_openbis(self):

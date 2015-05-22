@@ -112,7 +112,7 @@ def write_checksum(file):
 
 def clean_filename(path):
     """ Generate a sane (alphanumeric) filename for path. """
-    allowed_chars = string.ascii_letters + string.digits + '_'
+    allowed_chars = string.ascii_letters + string.digits + '_.'
     stem, suffix = os.path.splitext(os.path.basename(path))
     cleaned_stem = ''.join(i for i in stem if i in allowed_chars)
     if not cleaned_stem:
@@ -125,12 +125,13 @@ def clean_filename(path):
 
 
 def _check_perms(path, userid, groupid, dirmode, filemode):
-    if userid and os.stat(path).st_uid != userid:
-        raise ValueError("userid of file %s should be %s but is %s" %
-                         (path, userid, os.stat(path).st_uid))
-    if groupid and os.stat(path).st_gid != groupid:
-        raise ValueError("groupid of file %s should be %s but is %s" %
-                         (path, groupid, os.stat(path).st_gid))
+    if not os.path.isdir(path):
+        if userid and os.stat(path).st_uid != userid:
+            raise ValueError("userid of file %s should be %s but is %s" %
+                             (path, userid, os.stat(path).st_uid))
+        if groupid and os.stat(path).st_gid != groupid:
+            raise ValueError("groupid of file %s should be %s but is %s" %
+                             (path, groupid, os.stat(path).st_gid))
 
     if os.path.isdir(path):
         if os.stat(path).st_mode % 0o1000 != dirmode:

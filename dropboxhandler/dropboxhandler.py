@@ -211,15 +211,22 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         file = os.path.abspath(file)
         base, name = os.path.split(file)
         cleaned_name = fstools.clean_filename(file)
-        dest = os.path.join(self._manual_dir, cleaned_name)
+        dest_dir = os.path.join(self._manual_dir, cleaned_name)
+        os.mkdir(dest_dir)
+
+        dest = os.path.join(dest_dir, cleaned_name)
         fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
-        logger.warn("manual intervention is required for %s", dest)
+        logger.warn("manual intervention is required for %s", dest_dir)
 
         # store the original file name
-        orig_file = os.path.join(self._manual_dir,
+        orig_file = os.path.join(dest_dir,
                                  cleaned_name + '.origlabfilename')
         with fstools.create_open(orig_file) as f:
             f.write(name)
+
+        source_file = os.path.join(dest_dir, "source_dropbox.txt")
+        with fstools.create_open(source_file) as f:
+            f.write(origin)
 
         fstools.write_checksum(dest)
 
