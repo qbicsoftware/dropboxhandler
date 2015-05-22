@@ -27,7 +27,7 @@ if not hasattr(__builtins__, 'FileNotFoundError'):
 
 logger = logging.getLogger('dropboxhandler.handler')
 
-BARCODE_REGEX = "[A-Z]{5}[0-9]{3}[A-Z][A-Z0-9]"
+BARCODE_REGEX = "Q[A-X0-9]{4}[0-9]{3}[A-X][A-X0-9]"
 FINISHED_MARKER = ".MARKER_is_finished_"
 ERROR_MARKER = "MARKER_error_"
 STARTED_MARKER = "MARKER_started_"
@@ -211,7 +211,12 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         file = os.path.abspath(file)
         base, name = os.path.split(file)
         cleaned_name = fstools.clean_filename(file)
-        dest_dir = os.path.join(self._manual_dir, cleaned_name)
+
+        manual_dir = os.path.join(self._manual_dir, origin)
+        if not os.path.exists(manual_dir):
+            os.mkdir(manual_dir)
+
+        dest_dir = os.path.join(manual_dir, cleaned_name)
         os.mkdir(dest_dir)
 
         dest = os.path.join(dest_dir, cleaned_name)

@@ -238,8 +238,10 @@ class TestFileHandler:
                 f.write('hi')
             self.handler.to_msconvert('origin', name, beat_timeout=2)
             print(os.listdir(self.paths['manual']))
-            print(os.listdir(os.path.join(self.paths['manual'], 'output')))
-            assert pexists(pjoin(self.paths['manual'],
+            print(os.listdir(os.path.join(self.paths['manual'],
+                                          'origin',
+                                          'output')))
+            assert pexists(pjoin(self.paths['manual'], 'origin',
                                  'output', 'output', 'data.mzml'))
 
 
@@ -359,15 +361,18 @@ class TestIntegration:
 
     def test_manual(self):
         self._send_file('dataaä .txt')
-        assert pexists(pjoin(self.paths['manual'], 'dataa.txt'))
+        assert pexists(pjoin(self.paths['manual'], 'incoming1', 'dataa.txt'))
         assert pexists(pjoin(self.paths['manual'],
+                             'incoming1',
                              'dataa.txt',
                              'dataa.txt.sha256sum'))
         with open(pjoin(self.paths['manual'],
+                        'incoming1',
                         'dataa.txt',
                         'dataa.txt.sha256sum')) as f:
             assert 'dataa.txt' in f.read()
         origfile = pjoin(self.paths['manual'],
+                         'incoming1',
                          'dataa.txt',
                          'dataa.txt.origlabfilename')
         with open(origfile) as f:
@@ -379,7 +384,7 @@ class TestIntegration:
 
     def test_tab(self):
         self._send_file('baää\t\n')
-        assert pexists(pjoin(self.paths['manual'], 'ba'))
+        assert pexists(pjoin(self.paths['manual'], 'incoming1', 'ba'))
 
     def test_conflict(self):
         self._send_file('blubb.txt')
@@ -394,7 +399,7 @@ class TestIntegration:
 
     def test_umask(self):
         self._send_dir('testdir', 'file1')
-        outpath = pjoin(self.paths['manual'], 'testdir')
+        outpath = pjoin(self.paths['manual'], 'incoming1', 'testdir')
         assert pexists(outpath)
         assert os.path.isdir(outpath)
         assert pexists(pjoin(outpath, 'testdir', 'file1'))
