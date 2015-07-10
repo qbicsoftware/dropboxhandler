@@ -15,11 +15,6 @@ from os.path import join as pjoin
 
 from . import fstools
 
-try:
-    from . import fscall
-except ImportError:
-    fscall = False
-
 if not hasattr(__builtins__, 'FileExistsError'):
     FileExistsError = OSError
 if not hasattr(__builtins__, 'FileNotFoundError'):
@@ -33,12 +28,8 @@ ERROR_MARKER = "MARKER_error_"
 STARTED_MARKER = "MARKER_started_"
 
 
-def message_to_admin(message):
-    pass
-
-
 def is_valid_barcode(barcode):
-    """ Check if barcode is a valid OpenBis barcode """
+    """Check if barcode is a valid OpenBis barcode."""
     if re.match('^' + BARCODE_REGEX + '$', barcode) is None:
         return False
     csum = sum(ord(c) * (i + 1) for i, c in enumerate(barcode[:-1]))
@@ -51,7 +42,7 @@ def is_valid_barcode(barcode):
 
 
 def extract_barcode(path):
-    """ Extract an OpenBis barcode from the file name.
+    """Extract an OpenBis barcode from the file name.
 
     If a barcode is found, return it. Raise ValueError if no barcode,
     or more that one barcode has been found.
@@ -72,7 +63,7 @@ def extract_barcode(path):
 
 
 def generate_openbis_name(path):
-    """ Generate a sane file name from the input file
+    r"""Generate a sane file name from the input file.
 
     Copy the barcode to the front and remove invalid characters.
 
@@ -91,13 +82,14 @@ def generate_openbis_name(path):
 
 
 class FileHandler(concurrent.futures.ThreadPoolExecutor):
-    """ Handle incoming files.
+
+    """Handle incoming files.
 
     Parameters
     ----------
     target_dirs: dict
         A dictionary containing the paths to output directories. Must
-        have the keys `storage`, `manual` and optionally `msconvert`.
+        have the keys `storage`, `manual`.
     openbis_dropboxes: list
         A list of pairs (regexp, path). Incoming files that contain
         a valid QBiC barcode will be stored in the path with the first
@@ -112,12 +104,11 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
     """
 
     def __init__(self, openbis_dropboxes, storage, manual,
-                 msconvert=None, tmpdir=None, max_workers=5, checksum=True):
+                 tmpdir=None, max_workers=5, checksum=True):
         super(FileHandler, self).__init__(max_workers)
         self._openbis_dropboxes = openbis_dropboxes
         self._storage_dir = storage
         self._manual_dir = manual
-        self._msconvert_dir = msconvert
         self._tmpdir = tmpdir
 
     def _find_openbis_dest(self, origin, name, is_dir):
@@ -137,7 +128,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         raise ValueError('No known openbis dropbox for file %s' % name)
 
     def to_openbis(self, origin, file, perms=None):
-        """ Sort this file or directory to the openbis dropboxes.
+        """Sort this file or directory to the openbis dropboxes.
 
         If the filename does not include an openbis barcode, raise ValueError.
         file, openbis_dir and tmpdir must all be on the same file system.
@@ -162,7 +153,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         os.mkdir(dest)
 
         logger.debug("Write file to openbis dropbox %s" % dest)
-        fstools.recursive_link(
+        fstools.recursive_copy(
             file, dest_file, tmpdir=self._tmpdir, perms=perms
         )
 
@@ -172,7 +163,9 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 
         fstools.write_checksum(dest_file)
 
-        with fstools.create_open(os.path.join(dest, "source_dropbox.txt")) as f:
+        source_file = os.path.join(dest, "source_dropbox.txt")
+
+        with fstools.create_open(source_file) as f:
             f.write(origin)
 
         # tell openbis that we are finished copying
@@ -203,11 +196,11 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         except FileExistsError:
             pass
 
-        fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
+        fstools.recursive_copy(file, dest, tmpdir=self._tmpdir, perms=perms)
         fstools.write_checksum(dest)
 
     def to_manual(self, origin, file, perms=None):
-        """ Copy this file to the directory for manual intervention"""
+        """Copy this file to the directory for manual intervention."""
         file = os.path.abspath(file)
         base, name = os.path.split(file)
         cleaned_name = fstools.clean_filename(file)
@@ -220,7 +213,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
         os.mkdir(dest_dir)
 
         dest = os.path.join(dest_dir, cleaned_name)
-        fstools.recursive_link(file, dest, tmpdir=self._tmpdir, perms=perms)
+        fstools.recursive_copy(file, dest, tmpdir=self._tmpdir, perms=perms)
         logger.warn("manual intervention is required for %s", dest_dir)
 
         # store the original file name
@@ -235,29 +228,8 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 
         fstools.write_checksum(dest)
 
-    def to_msconvert(self, origin, file, beat_timeout=30, perms=None):
-        if not fscall:
-            raise ValueError("msconvert need pathlib, which is not installed")
-        future = fscall.submit(self._msconvert_dir, [file],
-                               beat_timeout=beat_timeout)
-        try:
-            res = future.result()  # TODO add timeout
-        except BaseException:
-            message_to_admin('hi')
-            # future.cancel()
-            raise
-        else:
-            try:
-                basepath, filename = os.path.split(res)
-                fstools.touch(os.path.join(basepath, STARTED_MARKER + filename))
-                self.submit(origin, res, os.path.split(res)[0]).result()
-                # future.clean()
-            except BaseException:
-                message_to_admin('blubb')
-                raise
-
     def _handle_file(self, origin, file, perms=None):
-        """ Figure out to which dirs file should be linked. """
+        """Figure out to which dirs file should be copied."""
         try:
             file = os.path.abspath(file)
 
@@ -299,7 +271,7 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
                 traceback.print_exc(file=f)
 
     def submit(self, origin, path, basedir, perms=None):
-        """ Submit an incoming file or directory to the thread pool.
+        """Submit an incoming file or directory to the thread pool.
 
         Arguments
         ---------
@@ -329,12 +301,13 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
                 os.unlink(started_marker)
             except OSError:
                 logger.error("Could not find start marker for file %s", path)
+            logger.info("Finished processing of file %s", path)
         future.add_done_callback(remove_markers)
         return future
 
 
 def process_marker(marker, basedir, incoming_name, handler, perms=None):
-    """ Check if there are new files in `incoming` and handle them if so.
+    """Check if there are new files in `incoming` and handle them if so.
 
     Marker files
     ------------
@@ -413,7 +386,7 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
 
 
 def listen(incoming, interval, handler):
-    """ Watch directories `incomings` for new files and call FileHandler."""
+    """Watch directories `incomings` for new files and call FileHandler."""
     logger.info("Starting to listen for new files")
     while True:
         for conf in incoming:

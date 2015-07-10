@@ -1,3 +1,4 @@
+"""A collection of file system related utilities."""
 import logging
 import os
 import sys
@@ -18,6 +19,11 @@ logger = logging.getLogger('dropboxhandler.fstools')
 
 # python2 does not allow open(..., mode='x')
 def create_open(path):
+    """Open a file for writing and raise if the file exists.
+
+    This should work like `open(path, mode='x')`, which is not
+    available in python26.
+    """
     if sys.version_info < (3, 3):
         fd = os.open(path, os.O_CREAT | os.O_NOFOLLOW | os.O_WRONLY)
         try:
@@ -31,9 +37,9 @@ def create_open(path):
         return open(path, mode='x')
 
 
-# python 2.6 compat
 if not hasattr(subprocess, 'check_output'):
     def check_output(*args, **kwargs):
+        """Python26 compatable version of `subprocess.check_output."""
         kwargs['stdout'] = subprocess.PIPE
         try:
             proc = subprocess.Popen(*args, **kwargs)
@@ -53,12 +59,13 @@ if not hasattr(subprocess, 'check_output'):
 
 
 def touch(path):
+    """Create a new file."""
     with create_open(path):
         pass
 
 
 def is_old(path):
-    """ Test if path has been modified during the last 5 days. """
+    """Test if path has been modified during the last 5 days."""
     modified = os.stat(path).st_mtime
     age_seconds = time.time() - modified
     if age_seconds > 60 * 60 * 24 * 5:  # 5 days
@@ -66,7 +73,7 @@ def is_old(path):
 
 
 def write_checksum(file):
-    """ Compute checksums of file or of contents if it is a dir.
+    """Compute checksums of file or of contents if it is a dir.
 
     Checksums will be written to <inputfile>.sha256sum in the
     format of the sha256sum tool.
@@ -111,7 +118,7 @@ def write_checksum(file):
 
 
 def clean_filename(path):
-    """ Generate a sane (alphanumeric) filename for path. """
+    """Generate a sane (alphanumeric) filename for path."""
     allowed_chars = string.ascii_letters + string.digits + '_.'
     stem, suffix = os.path.splitext(os.path.basename(path))
     cleaned_stem = ''.join(i for i in stem if i in allowed_chars)
@@ -124,15 +131,11 @@ def clean_filename(path):
     return cleaned_stem + suffix
 
 
-def _check_perms(path, userid, groupid, dirmode, filemode):
-    if not os.path.isdir(path):
-        if userid and os.stat(path).st_uid != userid:
-            raise ValueError("userid of file %s should be %s but is %s" %
-                             (path, userid, os.stat(path).st_uid))
-        if groupid and os.stat(path).st_gid != groupid:
-            raise ValueError("groupid of file %s should be %s but is %s" %
-                             (path, groupid, os.stat(path).st_gid))
+def _check_perms(path, userid=None, groupid=None, dirmode=None, filemode=None):
+    """Raise `ValueError` if the permissions of `path` are not as expected.
 
+    Owner and group will only be checked for files, not for directories.
+    """
     if os.path.isdir(path):
         if os.stat(path).st_mode % 0o1000 != dirmode:
             raise ValueError("mode of dir %s should be %o but is %o" %
@@ -143,12 +146,18 @@ def _check_perms(path, userid, groupid, dirmode, filemode):
         if os.stat(path).st_mode % 0o1000 != filemode:
             raise ValueError("mode of file %s should be %o but is %o" %
                              (path, filemode, os.stat(path).st_mode % 0o1000))
+        if userid and os.stat(path).st_uid != userid:
+            raise ValueError("userid of file %s should be %s but is %s" %
+                             (path, userid, os.stat(path).st_uid))
+        if groupid and os.stat(path).st_gid != groupid:
+            raise ValueError("groupid of file %s should be %s but is %s" %
+                             (path, groupid, os.stat(path).st_gid))
     else:
         raise ValueError("should be a regular file or dir: %s" % path)
 
 
 def check_permissions(path, userid, groupid, dirmode, filemode):
-    """ Basic sanity check for permissions of file written by this daemon.
+    """Basic sanity check for permissions of file written by this daemon.
 
     Raises ValueError, if permissions are not as specified, or for files
     that are not regular files or directories.
@@ -161,7 +170,25 @@ def check_permissions(path, userid, groupid, dirmode, filemode):
                          userid, groupid, dirmode, filemode)
 
 
-def recursive_link(source, dest, tmpdir=None, perms=None):
+def recursive_copy(source, dest, tmpdir=None, perms=None, link=False):
+    """Copy a file or directory to destination.
+
+    Arguments
+    ---------
+    source : str
+        Path to the source file or directory
+    dest : str
+        Destination file name. This must not exists. Copying a file
+        into another directory by specifing the directory as destination
+        (as with the command line tool `cp`) is *not* supported. You need
+        to specify the whole destination path.
+    tmpdir : str
+        A temporary directory on the same file system as `dest`.
+    perms : dict, optional
+        Arguments to `fstools.check_permission`
+    link : bool
+        Weather files should be copied or hard-linked.
+    """
     source = os.path.abspath(source)
     dest = os.path.abspath(dest)
     if os.path.exists(dest):
@@ -175,7 +202,6 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
 
     command = [
         'cp',
-        '--link',
         '--no-dereference',  # symbolic links could point anywhere
         '--recursive',
         '--no-clobber',
@@ -183,6 +209,9 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
         str(source),
         str(workdest),
     ]
+
+    if link:
+        command.insert(1, '--link')
 
     try:
         subprocess.check_call(command, shell=False)
@@ -204,11 +233,10 @@ def recursive_link(source, dest, tmpdir=None, perms=None):
             check_permissions(workdest, **perms)
 
         logger.debug("Created links in workdir. Moving to destination")
-        # TODO race condition
-        if os.path.exists((dest)):
+        if os.path.exists(dest):
             raise ValueError("Destination exists: %s", dest)
         os.rename(workdest, dest)
-    except:  # even for SystemExit
+    except BaseException:  # even for SystemExit
         logger.error("Got exception before we finished copying files. " +
                      "Rolling back changes")
         if os.path.exists(dest):

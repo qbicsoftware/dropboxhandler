@@ -21,7 +21,9 @@ logger = None
 
 
 class RestartException(BaseException):
-    """ Raised on SIGUSR1 to indicate that the config file changed."""
+
+    """Raised on SIGUSR1 to indicate that the config file changed."""
+
     pass
 
 
@@ -41,7 +43,7 @@ def init_logging(options):
 
 
 def daemonize(func, pidfile, umask, *args, **kwargs):
-    """ Run ``func`` in new process independent from this one.
+    """Run ``func`` in new process independent from this one.
 
     Write the pid of the new daemon to pidfile.
     """
@@ -70,9 +72,9 @@ def daemonize(func, pidfile, umask, *args, **kwargs):
     logger.info("PID of new daemon: %s", os.getpid())
 
     os.umask(umask)
-    write_pidfile(pidfile)
-    close_open_fds()
-    init_signal_handler()
+    _write_pidfile(pidfile)
+    _close_open_fds()
+    _init_signal_handler()
     try:
         func(*args, **kwargs)
     except Exception:
@@ -86,7 +88,7 @@ def print_example_config():
         print(f.read())
 
 
-def write_pidfile(pidfile):
+def _write_pidfile(pidfile):
     try:
         with fstools.create_open(pidfile) as f:
             f.write(str(os.getpid()) + '\n')
@@ -107,14 +109,14 @@ def write_pidfile(pidfile):
         sys.exit(1)
 
 
-def close_open_fds():
+def _close_open_fds():
     # use devnull for std file descriptors
     devnull = os.open('/dev/null', os.O_RDWR)
     for i in range(3):
         os.dup2(devnull, 0)
 
 
-def init_signal_handler():
+def _init_signal_handler():
     def handler(sig, frame):
         if sig == signal.SIGTERM:
             logger.warn("Daemon got SIGTERM. Shutting down.")
@@ -155,7 +157,7 @@ def start(ignore_daemon=False):
                     args['options']['umask'], **listen_args
                 )
             else:
-                init_signal_handler()
+                _init_signal_handler()
                 os.umask(args['options']['umask'])
                 dropboxhandler.listen(**listen_args)
 
@@ -178,7 +180,7 @@ def error_exit(message):
 
 
 def parse_args():
-    """ Read arguments from config file and command line args."""
+    """Read arguments from config file and command line args."""
     options_default = {
         'permissions': True,
         'checksum': True,
@@ -261,7 +263,7 @@ def check_options(options):
 
 def check_outgoing(conf):
     for key in conf:
-        if key not in ['manual', 'storage', 'tmpdir', 'msconvert']:
+        if key not in ['manual', 'storage', 'tmpdir']:
             error_exit("Invalid path for key %s in section 'outgoing'" % key)
         if not os.path.isabs(conf[key]):
             error_exit("Path in config section 'outgoing' is not absolute: %s"

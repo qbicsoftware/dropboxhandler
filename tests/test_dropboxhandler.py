@@ -3,23 +3,19 @@
 from __future__ import print_function
 from dropboxhandler import (
     extract_barcode, init_logging, is_valid_barcode,
-    write_checksum, recursive_link, generate_openbis_name,
+    write_checksum, recursive_copy, generate_openbis_name,
     FileHandler, print_example_config,
 )
 from nose.tools import raises
-import nose
 import tempfile
 import subprocess
 import os
-import sys
 import shutil
 import signal
 import time
 import yaml
 from os.path import join as pjoin
 from os.path import exists as pexists
-import threading
-import contextlib
 try:
     from unittest import mock
 except ImportError:
@@ -128,7 +124,7 @@ def test_write_checksum():
 
 
 @raises(ValueError)
-def test_recursive_link():
+def test_recursive_copy():
     base = tempfile.mkdtemp()
 
     source = os.path.join(base, 'data')
@@ -140,7 +136,7 @@ def test_recursive_link():
 
     dest = os.path.join(base, 'dest')
     try:
-        recursive_link(source, dest)
+        recursive_copy(source, dest)
     finally:
         shutil.rmtree(base)
 
@@ -153,7 +149,7 @@ class TestFileHandler:
 
     def setUp(self):
         self.base = tempfile.mkdtemp()
-        self.dir_names = ['storage', 'manual', 'msconvert', 'tmpdir',
+        self.dir_names = ['storage', 'manual', 'tmpdir',
                           'openbis_raw', 'openbis_mzml', 'incoming']
         self.paths = {}
         for name in self.dir_names:
@@ -168,7 +164,6 @@ class TestFileHandler:
         self.handler = FileHandler(self.openbis_dropboxes,
                                    storage=self.paths['storage'],
                                    manual=self.paths['manual'],
-                                   msconvert=self.paths['msconvert'],
                                    tmpdir=self.paths['tmpdir'])
 
     def tearDown(self):
@@ -177,7 +172,7 @@ class TestFileHandler:
 
     @mock.patch('dropboxhandler.fstools.write_checksum')
     @mock.patch('os.mkdir')
-    @mock.patch('dropboxhandler.fstools.recursive_link')
+    @mock.patch('dropboxhandler.fstools.recursive_copy')
     def test_to_storage(self, link, mkdir, chksum):
         self.handler.to_storage('origin', '/tmp/bob.txt', perms=self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'other'))
@@ -189,7 +184,7 @@ class TestFileHandler:
 
     @mock.patch('dropboxhandler.fstools.write_checksum')
     @mock.patch('os.mkdir')
-    @mock.patch('dropboxhandler.fstools.recursive_link')
+    @mock.patch('dropboxhandler.fstools.recursive_copy')
     def test_to_storage_barcode(self, link, mkdir, chksum):
         self.handler.to_storage('origin', '/tmp/QJFDC010EUääa.txt', self.perms)
         mkdir.assert_called_with(pjoin(self.paths['storage'], 'QJFDC'))
@@ -198,51 +193,6 @@ class TestFileHandler:
             pjoin(self.paths['storage'], 'QJFDC', 'QJFDC010EU_a.txt'),
             tmpdir=self.paths['tmpdir'], perms=self.perms,
         )
-
-    @contextlib.contextmanager
-    def msconvert_server(self, server_func=None):
-        try:
-            self._stop_msconvert_server = threading.Event()
-            if server_func is None:
-                def server_func(request):
-                    with request.beat():
-                        (request.outdir / "data.mzml").touch()
-                        request.success('did nothing')
-
-            def run():
-                listener = fscall.listen(
-                    listendir=self.paths['msconvert'],
-                    interval=0.05,
-                    beat_interval=0.02,
-                    stop_event=self._stop_msconvert_server
-                )
-                for request in listener:
-                    server_func(request)
-
-            self._msconvert_thread = threading.Thread(target=run)
-            self._msconvert_thread.start()
-            yield
-        finally:
-            self._stop_msconvert_server.set()
-            self._msconvert_thread.join()
-            assert not self._msconvert_thread.is_alive()
-
-    def test_msconvert_server(self):
-        if not fscall:
-            raise nose.SkipTest("pathlib is not installed")
-        if sys.version_info < (3, 3):
-            raise nose.SkipTest("no python2 support for msconvert")
-        with self.msconvert_server():
-            name = pjoin(self.paths['incoming'], 'tmpfile')
-            with open(name, 'w') as f:
-                f.write('hi')
-            self.handler.to_msconvert('origin', name, beat_timeout=2)
-            print(os.listdir(self.paths['manual']))
-            print(os.listdir(os.path.join(self.paths['manual'],
-                                          'origin',
-                                          'output')))
-            assert pexists(pjoin(self.paths['manual'], 'origin',
-                                 'output', 'output', 'data.mzml'))
 
 
 class TestIntegration:
@@ -281,10 +231,15 @@ class TestIntegration:
                     'tmpdir': self.paths['tmpdir'],
                 },
                 'openbis': [
-                    {'regexp': "^\w*.(raw|RAw)$", 'path': self.paths['openbis_raw']},
-                    {'regexp': "^\w*.mzml$",
-                     'path': self.paths['openbis_mzml'],
-                     'origin': ['incoming1']},
+                    {
+                        'regexp': "^\w*.(raw|RAw)$",
+                        'path': self.paths['openbis_raw']
+                    },
+                    {
+                        'regexp': "^\w*.mzml$",
+                        'path': self.paths['openbis_mzml'],
+                        'origin': ['incoming1']
+                    },
                 ],
                 'logging': {
                     'version': 1,
