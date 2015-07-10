@@ -377,6 +377,13 @@ def process_marker(marker, basedir, incoming_name, handler, perms=None):
             logger.error("Found an old start marker: %s.", start_marker)
         return
 
+    # The finished marker file may have been removed by now
+    if not os.path.exists(finish_marker):
+        logger.debug(
+            "Marker file does not exist any more. Aborting: %s", finish_marker
+        )
+        return
+
     try:
         if not filename:
             raise ValueError("Got invalid marker file: %s" % finish_marker)
