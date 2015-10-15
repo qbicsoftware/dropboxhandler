@@ -133,8 +133,9 @@ def _init_signal_handler():
 
 def start(ignore_daemon=False):
     args = parse_args()
-    check_configuration(args)
-    if args['check_config']:
+    check_config = args['check_config']
+    check_configuration(args, is_check_run=check_config)
+    if check_config:
         print('Config file seems fine.')
         sys.exit(0)
     init_logging(args['logging'])
@@ -238,7 +239,7 @@ def parse_args():
     return config
 
 
-def check_options(options):
+def check_options(options, is_check_run):
     for key in options:
         if key == 'permissions' and options[key] not in [True, False]:
             error_exit("Invalid value for 'permissions' in section 'options'")
@@ -251,6 +252,10 @@ def check_options(options):
         elif key == 'pidfile' and not os.path.isabs(options[key]):
             error_exit("Invalid value for 'pidfile' in section 'options'")
         elif key == 'pidfile' and os.path.exists(options[key]):
+            if is_check_run:
+                print("Pidfile exists. The daemon is probably running.",
+                      file=sys.stderr)
+                continue
             with open(options[key]) as f:
                 if os.getpid() == int(f.read()):
                     continue
@@ -342,9 +347,9 @@ def check_openbis(config):
                 error_exit("Unexpected option %s in section 'openbis'" % key)
 
 
-def check_configuration(config):
+def check_configuration(config, is_check_run):
     """ Sanity checks for configuration. """
-    check_options(config['options'])
+    check_options(config['options'], is_check_run=is_check_run)
     check_outgoing(config['outgoing'])
     check_incoming(config['incoming'])
     check_openbis(config['openbis'])
