@@ -78,6 +78,8 @@ def generate_openbis_name(path):
     cleaned_name = fstools.clean_filename(path)
     barcode = extract_barcode(cleaned_name)
     name = cleaned_name.replace(barcode, "")
+    if name.startswith('_'):
+        name = name[1:]
     return barcode + '_' + name
 
 
