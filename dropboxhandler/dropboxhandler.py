@@ -82,6 +82,8 @@ def generate_openbis_name(path):
         logger.warn("No or more than one barcode in file: %s. Trying to find respective rule.", path)
         return name
     name = cleaned_name.replace(barcode, "")
+    if name.startswith('_'):
+        name = name[1:]
     return barcode + '_' + name
 
 
