@@ -76,7 +76,11 @@ def generate_openbis_name(path):
     'QJFDC010EU_stpidname.raw'
     """
     cleaned_name = fstools.clean_filename(path)
-    barcode = extract_barcode(cleaned_name)
+    try:
+        barcode = extract_barcode(cleaned_name)
+    except ValueError:
+        logger.warn("No or more than one barcode in file: %s. Trying to find respective rule.", path)
+        return name
     name = cleaned_name.replace(barcode, "")
     return barcode + '_' + name
 
