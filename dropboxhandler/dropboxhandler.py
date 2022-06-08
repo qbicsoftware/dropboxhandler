@@ -246,7 +246,6 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 
             try:
                 self.to_openbis(origin, file, perms=perms)
-                self.to_storage(origin, file, perms=perms)
             except ValueError:
                 self.to_manual(origin, file, perms=perms)
 
