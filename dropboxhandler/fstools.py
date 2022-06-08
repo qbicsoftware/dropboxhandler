@@ -235,7 +235,10 @@ def recursive_copy(source, dest, tmpdir=None, perms=None, link=False):
         logger.debug("Created links in workdir. Moving to destination")
         if os.path.exists(dest):
             raise ValueError("Destination exists: %s", dest)
-        os.rename(workdest, dest)
+        try:
+            os.rename(workdest, dest)
+        except OSError: #dest is on different file system
+            shutil.copytree(workdest, dest, symlinks=False, ignore = None)
     except BaseException:  # even for SystemExit
         logger.error("Got exception before we finished copying files. " +
                      "Rolling back changes")
