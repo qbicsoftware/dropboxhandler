@@ -63,7 +63,6 @@ def get_size(path):
     total_size = 0
     for dirpath, dirnames, filenames in os.walk(path):
         for f in filenames:
-            print f
             fp = os.path.join(dirpath, f)
             # skip if it is symbolic link
             if not os.path.islink(fp):
