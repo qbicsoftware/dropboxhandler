@@ -182,6 +182,17 @@ def check_permissions(path, userid, groupid, dirmode, filemode):
                          userid, groupid, dirmode, filemode)
 
 
+def wait_and_retry(redo_func, path, err):
+    """Retries the same function on the same path after 10 seconds of wait time.
+    Used to fix issues with deleting tmp folders containing many large datasets.
+    """
+    logger.debug("Error calling "+redo_func.__name__)
+    logger.debug("On path "+str(path))
+    logger.debug("Sleeping 10 seconds and trying again.")
+    time.sleep(10)
+    redo_func(path)
+
+
 def recursive_copy(source, dest, tmpdir=None, perms=None, link=False):
     """Copy a file or directory to destination.
 
@@ -258,4 +269,4 @@ def recursive_copy(source, dest, tmpdir=None, perms=None, link=False):
             shutil.rmtree(dest)
         raise
     finally:
-        shutil.rmtree(tmpdir)
+        shutil.rmtree(tmpdir, onerror = wait_and_retry)

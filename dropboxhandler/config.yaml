@@ -76,6 +76,6 @@ logging:
             subject: '[dropboxhandler] Error encountered.'
     formatters:
         detailed:
-            format: '%(asctime)s %(module)-17s line:%(lineno)-4d (levelname)-8s %(message)s'
+            format: '%(asctime)s %(module)-17s line:%(lineno)-4d %(level)-8s %(message)s'
         email:
             format: 'Timestamp: %(asctime)s\nModule: %(module)s\n Line: %(lineno)d\nMessage: %(message)s'
