@@ -76,7 +76,7 @@ def is_hidden(path):
     <timestamp>_._<rest of name>
     <barcode>_<timestamp>_._<rest of name>
     """
-    return re.match(".*"+TIMESTAMP_REGEX+"_\.", path):
+    return re.match(".*"+TIMESTAMP_REGEX+"_\.", path)
 
 def generate_openbis_name(path):
     r"""Generate a sane file name from the input file.
