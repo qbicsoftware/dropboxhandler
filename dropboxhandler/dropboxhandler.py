@@ -64,21 +64,20 @@ def extract_barcode(path):
     return barcodes[0]
 
 def isEmpty(path):
-    """Check the size of the incoming file or folder. Throws error
-    if it's empty.
+    """Check the size of the incoming file or folder.
     """
     return fstools.get_size(path) == 0
-  
+
 def isHidden(path):
-    """If file is hidden (starts with '.') throw error. To be sure
+    """Checks if a transfered file was hidden. To be sure
     the file processed by datamover started with '.', we check for
     the timestamp before it, as well.
     Possible names dependent on processing status:
     <timestamp>_._<rest of name>
     <barcode>_<timestamp>_._<rest of name>
     """
-    return os.path.basename(os.path.abspath(path)).startswith('.')
-    
+    return re.match(".*"+TIMESTAMP_REGEX+"_\.", path):
+
 if (isHidden(path) or isEmpty(path)): 
    # Do reporting strategy here
 
@@ -168,10 +167,12 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 
         # files we don't want to process further raise exceptions:
         # check if this file or all files in the folder are empty
-        check_not_empty(file)
+        if isEmpty(file):
+            raise ValueError('%s is empty.' % file)
         # check if this file or folder is hidden. these files are
         # created when copying the main files from/to certain file systems
-        check_not_hidden(file)
+        if isHidden(file):
+            raise ValueError('%s is a hidden file.' % file)
 
         openbis_name = generate_openbis_name(file)
 
