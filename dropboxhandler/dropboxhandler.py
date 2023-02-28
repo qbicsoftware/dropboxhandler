@@ -23,6 +23,8 @@ if not hasattr(__builtins__, 'FileNotFoundError'):
 logger = logging.getLogger('dropboxhandler.handler')
 
 BARCODE_REGEX = "Q[A-X0-9]{4}[0-9]{3}[A-X][A-X0-9]"
+#20230227105848 -year-date-hours-minutes-seconds
+TIMESTAMP_REGEX = "[0-9]{4}[0-1][0-9][0-3][0-9][0-2][0-9][0-5][0-9][0-5][0-9]"
 FINISHED_MARKER = ".MARKER_is_finished_"
 ERROR_MARKER = "MARKER_error_"
 STARTED_MARKER = "MARKER_started_"
@@ -61,6 +63,20 @@ def extract_barcode(path):
         raise ValueError("more than one barcode in filename")
     return barcodes[0]
 
+def is_empty(path):
+    """Check the size of the incoming file or folder.
+    """
+    return fstools.get_size(path) == 0
+
+def is_hidden(path):
+    """Checks if a transfered file was hidden. To be sure
+    the file processed by datamover started with '.', we check for
+    the timestamp before it, as well.
+    Possible names dependent on processing status:
+    <timestamp>_._<rest of name>
+    <barcode>_<timestamp>_._<rest of name>
+    """
+    return re.match(".*"+TIMESTAMP_REGEX+"_\.", path):
 
 def generate_openbis_name(path):
     r"""Generate a sane file name from the input file.
@@ -146,7 +162,17 @@ class FileHandler(concurrent.futures.ThreadPoolExecutor):
 
         base, orig_name = os.path.split(file)
 
+        # files we don't want to process further raise exceptions:
+        # check if this file or all files in the folder are empty
+        if is_empty(file):
+            raise ValueError('%s is empty.' % file)
+        # check if this file or folder is hidden. these files are
+        # created when copying the main files from/to certain file systems
+        if is_hidden(file):
+            raise ValueError('%s is a hidden file.' % file)
+
         openbis_name = generate_openbis_name(file)
+
         logger.info("Exporting %s to OpenBis as %s", file, openbis_name)
 
         is_dir = os.path.isdir(file)
