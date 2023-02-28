@@ -63,15 +63,13 @@ def extract_barcode(path):
         raise ValueError("more than one barcode in filename")
     return barcodes[0]
 
-def check_not_empty(path):
+def isEmpty(path):
     """Check the size of the incoming file or folder. Throws error
     if it's empty.
     """
-    size = fstools.get_size(path)
-    if size == 0:
-        raise ValueError('%s is empty.' % path)
-
-def check_not_hidden(path):
+    return fstools.get_size(path) == 0
+  
+def isHidden(path):
     """If file is hidden (starts with '.') throw error. To be sure
     the file processed by datamover started with '.', we check for
     the timestamp before it, as well.
@@ -79,8 +77,10 @@ def check_not_hidden(path):
     <timestamp>_._<rest of name>
     <barcode>_<timestamp>_._<rest of name>
     """
-    if re.match(".*"+TIMESTAMP_REGEX+"_\.", path):
-        raise ValueError('%s is a hidden file.' % path)
+    return os.path.basename(os.path.abspath(path)).startswith('.')
+    
+if (isHidden(path) or isEmpty(path)): 
+   # Do reporting strategy here
 
 def generate_openbis_name(path):
     r"""Generate a sane file name from the input file.
