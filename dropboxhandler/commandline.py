@@ -216,7 +216,7 @@ def parse_args():
 
     try:
         with open(args.conf_file) as f:
-            config = yaml.load(f)
+            config = yaml.safe_load(f)
     except dropboxhandler.FileNotFoundError:
         error_exit("Could not find config file (default location: " +
                    "~/.dropboxhandler.conf")
