@@ -292,7 +292,8 @@ def _group_to_gid(group):
 
 
 def _check_permission_config(conf):
-    for key in conf:
+    conf_copy = conf.copy()
+    for key in conf_copy.keys():
         if key == 'user':
             conf['userid'] = _user_to_uid(conf[key])
             del conf['user']
