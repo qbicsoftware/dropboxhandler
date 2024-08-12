@@ -216,7 +216,7 @@ def parse_args():
 
     try:
         with open(args.conf_file) as f:
-            config = yaml.load(f)
+            config = yaml.safe_load(f)
     except dropboxhandler.FileNotFoundError:
         error_exit("Could not find config file (default location: " +
                    "~/.dropboxhandler.conf")
@@ -292,7 +292,8 @@ def _group_to_gid(group):
 
 
 def _check_permission_config(conf):
-    for key in conf:
+    conf_copy = conf.copy()
+    for key in conf_copy.keys():
         if key == 'user':
             conf['userid'] = _user_to_uid(conf[key])
             del conf['user']
